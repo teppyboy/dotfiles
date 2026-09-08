@@ -26,7 +26,7 @@ class SyncTests(unittest.TestCase):
                 sync.resolve_destination(
                     "win32", "home", ".pi/AGENTS.md", home=home, appdata=appdata
                 ),
-                home / ".pi" / "AGENTS.md",
+                (home / ".pi" / "AGENTS.md").resolve(strict=False),
             )
             self.assertEqual(
                 sync.resolve_destination(
@@ -36,7 +36,7 @@ class SyncTests(unittest.TestCase):
                     home=home,
                     appdata=appdata,
                 ),
-                appdata / "OpenCode" / "config.json",
+                (appdata / "OpenCode" / "config.json").resolve(strict=False),
             )
 
     def test_resolve_destination_supports_macos_home(self):
@@ -46,7 +46,7 @@ class SyncTests(unittest.TestCase):
                 sync.resolve_destination(
                     "darwin", "home", ".pi/AGENTS.md", home=home, appdata=None
                 ),
-                home / ".pi" / "AGENTS.md",
+                (home / ".pi" / "AGENTS.md").resolve(strict=False),
             )
 
     def test_unsupported_platform_fails(self):
@@ -90,12 +90,26 @@ class SyncTests(unittest.TestCase):
             b"access-token: abc",
             b'private_key = "abc"',
             b"password: abc",
+            b"token = abc",
+            b"auth = abc",
+            b"credential: abc",
+            b"cookie = abc",
+            b"session: abc",
         ):
             with self.subTest(content=content), self.assertRaises(sync.SyncError):
                 sync.ensure_safe_content(content)
 
+    def test_content_scanner_rejects_utf16_and_utf32_credentials(self):
+        for encoding in ("utf-16", "utf-32"):
+            with self.subTest(encoding=encoding), self.assertRaises(sync.SyncError):
+                sync.ensure_safe_content("token = abc".encode(encoding))
+
+    def test_content_scanner_rejects_binary_content(self):
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(bytes((0, 1, 2)))
+
     def test_content_scanner_accepts_non_sensitive_settings(self):
-        sync.ensure_safe_content(b"theme = 'dark'\nmodel = 'default'\n")
+        sync.ensure_safe_content(b"theme = 'dark'\\nmodel = 'default'\\n")
 
     def test_unlisted_file_is_not_exported(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -133,6 +147,51 @@ class SyncTests(unittest.TestCase):
 
             self.assertFalse(destination.exists())
 
+    def test_copy_rejects_directory_destination(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source.txt"
+            destination = root / "destination"
+            source.write_text("safe", encoding="utf-8")
+            destination.mkdir()
+
+            with self.assertRaises(sync.SyncError):
+                sync.copy_file(source, destination, dry_run=False, force=True)
+
+    def test_copy_rejects_symlink_source_and_destination(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source.txt"
+            source.write_text("safe", encoding="utf-8")
+            outside = root / "outside.txt"
+            outside.write_text("safe", encoding="utf-8")
+            source_link = root / "source-link.txt"
+            destination_link = root / "destination-link.txt"
+            try:
+                source_link.symlink_to(outside)
+                destination_link.symlink_to(outside)
+            except (NotImplementedError, OSError):
+                self.skipTest("symlinks unavailable")
+
+            with self.assertRaises(sync.SyncError):
+                sync.copy_file(source_link, root / "copied.txt", dry_run=False, force=True)
+            with self.assertRaises(sync.SyncError):
+                sync.copy_file(source, destination_link, dry_run=False, force=True)
+
+    def test_safe_join_rejects_symlink_component(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            outside = root / "outside"
+            outside.mkdir()
+            link = root / "link"
+            try:
+                link.symlink_to(outside, target_is_directory=True)
+            except (NotImplementedError, OSError):
+                self.skipTest("symlinks unavailable")
+
+            with self.assertRaises(sync.SyncError):
+                sync._safe_join(root, "link/file.txt")
+
     def test_install_does_not_overwrite_without_force(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -157,6 +216,54 @@ class SyncTests(unittest.TestCase):
             sync.copy_file(source, destination, dry_run=False, force=True)
 
             self.assertEqual(destination.read_text(encoding="utf-8"), "new")
+
+    def test_optional_and_required_mappings(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            home.mkdir()
+            repo.mkdir()
+            optional = sync.Mapping("test", "optional.txt", "home", "optional.txt")
+            required = sync.Mapping("test", "required.txt", "home", "required.txt", True)
+
+            self.assertEqual(
+                sync.export_files((optional,), repo, platform="darwin", home=home), 0
+            )
+            with self.assertRaises(sync.SyncError):
+                sync.export_files((required,), repo, platform="darwin", home=home)
+
+    def test_check_files_reports_required_missing_and_safe_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            home.mkdir()
+            repo.mkdir()
+            (repo / "safe.txt").write_text("theme = 'dark'", encoding="utf-8")
+            (home / "safe.txt").write_text("theme = 'dark'", encoding="utf-8")
+            manifest = (
+                sync.Mapping("test", "safe.txt", "home", "safe.txt"),
+                sync.Mapping("test", "missing.txt", "home", "missing.txt", True),
+            )
+
+            self.assertEqual(
+                sync.check_files(manifest, repo, platform="darwin", home=home), 2
+            )
+
+    def test_repository_root_symlink_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            actual = root / "repo"
+            actual.mkdir()
+            link = root / "repo-link"
+            try:
+                link.symlink_to(actual, target_is_directory=True)
+            except (NotImplementedError, OSError):
+                self.skipTest("symlinks unavailable")
+
+            with self.assertRaises(sync.SyncError):
+                sync.check_files((), link, platform="darwin", home=root / "home")
 
 
 if __name__ == "__main__":
