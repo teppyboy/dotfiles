@@ -1,1 +1,45 @@
+# Worktrees
 .worktrees/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Local environment files
+.env
+.env.*
+
+# Harness state
+.pi/
+.opencode/
+.agents/
+.claude/
+.codex/
+
+# Logs and local databases
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Secret and private material
+*.pem
+*.key
+*.p12
+*.pfx
+**/auth*/
+**/*token*/
+**/*secret*/
+**/*credential*/
+**/*password*/
+**/*cookie*/
+**/*history*/
+**/*session*/
+**/*cache*/
+**/*private*/
