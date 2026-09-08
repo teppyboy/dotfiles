@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import importlib.util
+import os
 import sys
 import tempfile
 import unittest
@@ -95,6 +97,8 @@ class SyncTests(unittest.TestCase):
             b"credential: abc",
             b"cookie = abc",
             b"session: abc",
+            b"OPENAI_API_KEY = abc",
+            b"MY_PASSWORD: abc",
         ):
             with self.subTest(content=content), self.assertRaises(sync.SyncError):
                 sync.ensure_safe_content(content)
@@ -107,6 +111,16 @@ class SyncTests(unittest.TestCase):
     def test_content_scanner_rejects_binary_content(self):
         with self.assertRaises(sync.SyncError):
             sync.ensure_safe_content(bytes((0, 1, 2)))
+
+    def test_content_scanner_rejects_encoded_credentials(self):
+        encoded = base64.b64encode(b"OPENAI_API_KEY=abc").decode()
+        for content in (
+            f"value={encoded}".encode(),
+            b"value=OPENAI%5FAPI%5FKEY%3Dabc",
+            b"value=OPENAI\\x5fAPI\\x5fKEY=abc",
+        ):
+            with self.subTest(content=content), self.assertRaises(sync.SyncError):
+                sync.ensure_safe_content(content)
 
     def test_content_scanner_accepts_non_sensitive_settings(self):
         sync.ensure_safe_content(b"theme = 'dark'\\nmodel = 'default'\\n")
@@ -158,6 +172,22 @@ class SyncTests(unittest.TestCase):
             with self.assertRaises(sync.SyncError):
                 sync.copy_file(source, destination, dry_run=False, force=True)
 
+    def test_copy_rejects_hardlink_destination(self):
+        if not hasattr(os, "link"):
+            self.skipTest("hardlinks unavailable")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source.txt"
+            destination = root / "destination.txt"
+            linked = root / "linked.txt"
+            source.write_text("new", encoding="utf-8")
+            destination.write_text("old", encoding="utf-8")
+            os.link(destination, linked)
+            with self.assertRaises(sync.SyncError):
+                sync.copy_file(source, destination, dry_run=False, force=True)
+            self.assertEqual(destination.read_text(encoding="utf-8"), "old")
+            self.assertEqual(linked.read_text(encoding="utf-8"), "old")
+
     def test_copy_rejects_symlink_source_and_destination(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -174,7 +204,9 @@ class SyncTests(unittest.TestCase):
                 self.skipTest("symlinks unavailable")
 
             with self.assertRaises(sync.SyncError):
-                sync.copy_file(source_link, root / "copied.txt", dry_run=False, force=True)
+                sync.copy_file(
+                    source_link, root / "copied.txt", dry_run=False, force=True
+                )
             with self.assertRaises(sync.SyncError):
                 sync.copy_file(source, destination_link, dry_run=False, force=True)
 
@@ -217,6 +249,24 @@ class SyncTests(unittest.TestCase):
 
             self.assertEqual(destination.read_text(encoding="utf-8"), "new")
 
+    def test_install_optional_and_required_mappings(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            home.mkdir()
+            repo.mkdir()
+            optional = sync.Mapping("test", "optional.txt", "home", "optional.txt")
+            required = sync.Mapping(
+                "test", "required.txt", "home", "required.txt", True
+            )
+
+            self.assertEqual(
+                sync.install_files((optional,), repo, platform="darwin", home=home), 0
+            )
+            with self.assertRaises(sync.SyncError):
+                sync.install_files((required,), repo, platform="darwin", home=home)
+
     def test_optional_and_required_mappings(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -225,7 +275,9 @@ class SyncTests(unittest.TestCase):
             home.mkdir()
             repo.mkdir()
             optional = sync.Mapping("test", "optional.txt", "home", "optional.txt")
-            required = sync.Mapping("test", "required.txt", "home", "required.txt", True)
+            required = sync.Mapping(
+                "test", "required.txt", "home", "required.txt", True
+            )
 
             self.assertEqual(
                 sync.export_files((optional,), repo, platform="darwin", home=home), 0

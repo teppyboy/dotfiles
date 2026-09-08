@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
+import codecs
+import contextlib
 import os
 import re
 import shutil
+import stat
 import sys
+import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote
 
 
 class SyncError(RuntimeError):
@@ -51,12 +58,17 @@ SENSITIVE_NAMES = (
     "log",
 )
 SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".db", ".sqlite", ".sqlite3"}
+MAX_CONTENT_BYTES = 8 * 1024 * 1024
+MAX_BASE64_CANDIDATES = 256
+MAX_BASE64_BYTES = 1024 * 1024
 CREDENTIAL_MARKERS = (
     re.compile(
-        r"(?im)(?:^|[^\w])(?:api[_-]?key|access[_-]?token|refresh[_-]?token|"
-        r"client[_-]?secret|private[_-]?key|auth(?:entication|orization)?|"
-        r"token|credential(?:s)?|password|secret|cookie|history|session)"
-        r"(?:[_-][\w-]+)?\s*[:=]"
+        r"(?im)(?<![A-Za-z0-9])(?:[A-Za-z][A-Za-z0-9_-]*?(?:api[_-]?key|"
+        r"access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|"
+        r"auth(?:entication|orization)?|token|credential(?:s)?|password|secret|"
+        r"cookie|history|session)[A-Za-z0-9_-]*|api[_-]?key|access[_-]?token|"
+        r"refresh[_-]?token|client[_-]?secret|private[_-]?key|auth|token|"
+        r"credentials?|password|secret|cookie|history|session)\s*[:=]"
     ),
     re.compile(r"-----BEGIN [^-\n]*PRIVATE KEY-----"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -85,14 +97,15 @@ def is_sensitive_path(path: Path) -> bool:
 
 def _is_text(text: str) -> bool:
     return not any(
-        (ord(character) < 32 and character not in "\t\n\r")
-        or ord(character) == 0xFFFD
+        (ord(character) < 32 and character not in "\t\n\r") or ord(character) == 0xFFFD
         for character in text
     )
 
 
 def _decoded_candidates(content: bytes) -> tuple[str, ...]:
     """Decode UTF text, rejecting undecodable or binary content."""
+    if len(content) > MAX_CONTENT_BYTES:
+        raise SyncError("refusing content larger than safety limit")
     encodings: list[str] = []
     if content.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")):
         encodings.append("utf-32")
@@ -120,13 +133,58 @@ def _decoded_candidates(content: bytes) -> tuple[str, ...]:
     return tuple(candidates)
 
 
+def _text_variants(text: str) -> tuple[str, ...]:
+    """Add bounded percent- and escape-decoded forms for marker scanning."""
+    variants = [text]
+    current = text
+    for _ in range(2):
+        decoded = unquote(current)
+        if decoded == current:
+            break
+        variants.append(decoded)
+        current = decoded
+    try:
+        escaped = codecs.decode(text, "unicode_escape")
+    except UnicodeDecodeError:
+        escaped = text
+    if escaped != text and _is_text(escaped):
+        variants.append(escaped)
+    return tuple(dict.fromkeys(variants))
+
+
+def _base64_variants(text: str) -> tuple[str, ...]:
+    """Decode a bounded number of plausible base64 fragments."""
+    pattern = re.compile(r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{16,}={0,2})(?![A-Za-z0-9+/_=-])")
+    variants: list[str] = []
+    for index, match in enumerate(pattern.finditer(text)):
+        if index >= MAX_BASE64_CANDIDATES:
+            break
+        encoded = match.group(1)
+        encoded += "=" * (-len(encoded) % 4)
+        try:
+            decoded = base64.b64decode(encoded, altchars=b"-_", validate=True)
+        except (ValueError, binascii.Error):
+            continue
+        if len(decoded) > MAX_BASE64_BYTES:
+            continue
+        try:
+            candidate = decoded.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        if _is_text(candidate):
+            variants.append(candidate)
+    return tuple(variants)
+
+
 def ensure_safe_content(content: bytes) -> None:
     """Reject credential formats without exposing file contents."""
-    if any(
-        marker.search(text)
-        for text in _decoded_candidates(content)
-        for marker in CREDENTIAL_MARKERS
-    ):
+    texts = _decoded_candidates(content)
+    variants = tuple(
+        variant
+        for text in texts
+        for variant in (*_text_variants(text), *_base64_variants(text))
+    )
+    if any(marker.search(text) for text in variants for marker in CREDENTIAL_MARKERS):
         raise SyncError("refusing content that resembles a credential")
 
 
@@ -227,6 +285,52 @@ def _reject_symlink_path(path: Path) -> None:
     _reject_symlink_ancestors(Path(path))
 
 
+def _regular_file_stat(path: Path, label: str) -> os.stat_result:
+    """Stat a non-symlink regular file without following links."""
+    try:
+        details = os.stat(path, follow_symlinks=False)
+    except OSError as exc:
+        raise SyncError(f"{label} file not found: {path}") from exc
+    if not stat.S_ISREG(details.st_mode):
+        raise SyncError(f"{label} is not a regular file: {path}")
+    return details
+
+
+def _copy_atomically(
+    source: Path, destination: Path, content: bytes, *, force: bool
+) -> None:
+    """Write a sibling temporary file, then atomically publish it."""
+    parent = destination.parent
+    _reject_symlink_path(parent)
+    parent.mkdir(parents=True, exist_ok=True)
+    _reject_symlink_path(parent)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", dir=parent, prefix=f".{destination.name}.", delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        shutil.copystat(source, temporary, follow_symlinks=False)
+        if force:
+            os.replace(temporary, destination)
+        else:
+            try:
+                os.link(temporary, destination)
+            except FileExistsError as exc:
+                raise SyncError(f"destination exists; use --force: {destination}") from exc
+            finally:
+                if temporary.exists():
+                    temporary.unlink()
+            temporary = None
+    finally:
+        if temporary is not None:
+            with contextlib.suppress(FileNotFoundError):
+                temporary.unlink()
+
+
 def copy_file(
     source: Path,
     destination: Path,
@@ -239,18 +343,30 @@ def copy_file(
     _reject_symlink_path(destination)
     if is_sensitive_path(source) or is_sensitive_path(destination):
         raise SyncError(f"refusing sensitive path: {source}")
-    if not source.is_file():
-        raise SyncError(f"source file not found: {source}")
-    if destination.exists() and not destination.is_file():
-        raise SyncError(f"destination is not a file: {destination}")
-    ensure_safe_content(source.read_bytes())
-    if destination.exists() and not force:
-        raise SyncError(f"destination exists; use --force: {destination}")
+    source_stat = _regular_file_stat(source, "source")
+    if destination.exists():
+        destination_stat = _regular_file_stat(destination, "destination")
+        if destination_stat.st_nlink > 1:
+            raise SyncError(f"refusing hardlink destination: {destination}")
+        if not force:
+            raise SyncError(f"destination exists; use --force: {destination}")
+    content = source.read_bytes()
+    ensure_safe_content(content)
+    try:
+        current_stat = os.stat(source, follow_symlinks=False)
+    except OSError as exc:
+        raise SyncError(f"source changed during read: {source}") from exc
+    if (
+        current_stat.st_dev != source_stat.st_dev
+        or current_stat.st_ino != source_stat.st_ino
+        or current_stat.st_size != source_stat.st_size
+        or current_stat.st_mtime_ns != source_stat.st_mtime_ns
+    ):
+        raise SyncError(f"source changed during read: {source}")
     action = "would copy" if dry_run else "copy"
     print(f"{action} {source} -> {destination}")
     if not dry_run:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        _copy_atomically(source, destination, content, force=force)
 
 
 def export_files(
