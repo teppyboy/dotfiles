@@ -27,6 +27,13 @@ venv/
 *.db
 *.sqlite
 *.sqlite3
+*.asc
+*.gpg
+*.ppk
+*.p8
+*.jks
+*.jceks
+*.keystore
 
 # Secret and private material
 *.pem
@@ -42,8 +49,9 @@ venv/
 **/*history*
 **/*session*
 **/*cache*
-**/*private*
-**/*id_rsa*
-**/*id_dsa*
-**/*id_ecdsa*
-**/*id_ed25519*
+**/private_key*
+**/private-key*
+**/id_rsa*
+**/id_dsa*
+**/id_ecdsa*
+**/id_ed25519*

@@ -21,3 +21,5 @@ python scripts/sync.py install --force
 This is a public repository. The manifest is allowlist-only: unknown files are never copied. The script rejects sensitive paths and common credential markers, never deletes repository files, and never disables safety checks with `--force`.
 
 Review every exported diff before committing. Never add credentials, auth state, API keys, tokens, cookies, private keys, history, logs, caches, databases, or machine-specific paths.
+
+The tool rejects symlinks and hardlinks, uses bounded reads, and publishes copies atomically. Path-based checks cannot eliminate every concurrent path-swap race; Windows reparse-point behavior also depends on filesystem and OS details.

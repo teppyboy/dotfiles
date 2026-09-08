@@ -93,6 +93,11 @@ class SyncTests(unittest.TestCase):
             Path("configs/pi/id_ed25519"),
             Path("configs/pi/private.asc"),
             Path("configs/pi/private.gpg"),
+            Path("configs/pi/private.ppk"),
+            Path("configs/pi/private.p8"),
+            Path("configs/pi/private.jks"),
+            Path("configs/pi/private.jceks"),
+            Path("configs/pi/private.keystore"),
         ):
             with self.subTest(path=path):
                 self.assertTrue(sync.is_sensitive_path(path))
@@ -116,6 +121,8 @@ class SyncTests(unittest.TestCase):
             b"__API_KEY = abc",
             b"OPENAI_API_KEY = abc",
             b"MY_PASSWORD: abc",
+            b'{"kty": "oct", "k": "symmetric-material"}',
+            b'{"k": "symmetric-material", "kty": "OKP"}',
         ):
             with self.subTest(content=content), self.assertRaises(sync.SyncError):
                 sync.ensure_safe_content(content)
@@ -139,6 +146,30 @@ class SyncTests(unittest.TestCase):
         ):
             with self.subTest(content=content), self.assertRaises(sync.SyncError):
                 sync.ensure_safe_content(content)
+
+    def test_content_scanner_rejects_private_formats(self):
+        for content in (
+            b"-----BEGIN PGP PRIVATE KEY BLOCK-----",
+            b'{"kty":"oct","k":"abc"}',
+        ):
+            with self.subTest(content=content), self.assertRaises(sync.SyncError):
+                sync.ensure_safe_content(content)
+
+    def test_content_scanner_rejects_oversized_content(self):
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(b"x" * (sync.MAX_CONTENT_BYTES + 1))
+
+    def test_content_scanner_rejects_exhausted_encoded_candidate_budget(self):
+        content = b" ".join(b"candidate%d" % index for index in range(sync.MAX_BASE64_CANDIDATES + 1))
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(content)
+
+    def test_bounded_reader_does_not_read_unbounded_content(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "settings.txt"
+            path.write_bytes(b"x" * (sync.MAX_CONTENT_BYTES + 1))
+            with self.assertRaises(sync.SyncError):
+                sync._read_bounded_content(path)
 
     def test_content_scanner_accepts_non_sensitive_settings(self):
         sync.ensure_safe_content(b"theme = 'dark'\\nmodel = 'default'\\n")

@@ -73,8 +73,17 @@ SENSITIVE_SUFFIXES = {
     ".db",
     ".sqlite",
     ".sqlite3",
+    ".ppk",
+    ".p8",
+    ".jks",
+    ".jceks",
+    ".keystore",
 }
-SENSITIVE_NAME_PATTERNS = (re.compile(r"(?i)(?:^|[-_.])api[_-]?key(?:$|[-_.])"),)
+SENSITIVE_NAME_PATTERNS = (
+    re.compile(r"(?i)(?:^|[-_.])api[_-]?key(?:$|[-_.])"),
+    re.compile(r"(?i)(?:^|[-_.])private(?:[-_]key)?(?:$|[-_.])"),
+    re.compile(r"(?i)(?:^|[-_.])id_(?:rsa|dsa|ecdsa|ed25519)(?:$|[-_.])"),
+)
 MAX_CONTENT_BYTES = 8 * 1024 * 1024
 MAX_BASE64_CANDIDATES = 256
 MAX_BASE64_BYTES = 1024 * 1024
@@ -90,6 +99,14 @@ CREDENTIAL_MARKERS = (
     re.compile(r"-----BEGIN [^-\n]*PRIVATE KEY-----"),
     re.compile(r"-----BEGIN PGP PRIVATE KEY BLOCK-----"),
     re.compile(r"(?i)['\"](?:d|p|q|dp|dq|qi)['\"]\s*:\s*['\"][^'\"]+['\"]"),
+    re.compile(
+        r"(?is)\{[^{}]{0,4096}\"kty\"\s*:\s*\"(?:oct|OKP)\""
+        r"[^{}]{0,4096}\"k\"\s*:\s*\"[^\"]+\"[^{}]{0,4096}\}"
+    ),
+    re.compile(
+        r"(?is)\{[^{}]{0,4096}\"k\"\s*:\s*\"[^\"]+\""
+        r"[^{}]{0,4096}\"kty\"\s*:\s*\"(?:oct|OKP)\"[^{}]{0,4096}\}"
+    ),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
@@ -180,7 +197,7 @@ def _base64_variants(text: str) -> tuple[str, ...]:
     variants: list[str] = []
     for index, match in enumerate(pattern.finditer(text)):
         if index >= MAX_BASE64_CANDIDATES:
-            break
+            raise SyncError("refusing content with too many encoded candidates")
         encoded = match.group(1)
         encoded += "=" * (-len(encoded) % 4)
         try:
@@ -208,6 +225,17 @@ def ensure_safe_content(content: bytes) -> None:
     if any(marker.search(text) for text in variants for marker in CREDENTIAL_MARKERS):
         raise SyncError("refusing content that resembles a credential")
 
+
+def _read_bounded_content(path: Path) -> bytes:
+    """Read at most one byte beyond the public-repository size limit."""
+    try:
+        with path.open("rb") as handle:
+            content = handle.read(MAX_CONTENT_BYTES + 1)
+    except OSError as exc:
+        raise SyncError(f"cannot read file: {path}") from exc
+    if len(content) > MAX_CONTENT_BYTES:
+        raise SyncError(f"refusing content larger than safety limit: {path}")
+    return content
 
 def _reject_symlink_ancestors(path: Path) -> None:
     """Reject symlink roots or parent components before filesystem access."""
@@ -379,7 +407,7 @@ def copy_file(
             raise SyncError(f"refusing hardlink destination: {destination}")
         if not force:
             raise SyncError(f"destination exists; use --force: {destination}")
-    content = source.read_bytes()
+    content = _read_bounded_content(source)
     ensure_safe_content(content)
     try:
         current_stat = os.stat(source, follow_symlinks=False)
@@ -481,7 +509,7 @@ def check_files(
                     details = _regular_file_stat(path, label)
                     if details.st_nlink > 1:
                         raise SyncError(f"refusing hardlink {label}: {path}")
-                    ensure_safe_content(path.read_bytes())
+                    ensure_safe_content(_read_bounded_content(path))
                 except (OSError, SyncError) as exc:
                     print(f"unsafe {label} {path}: {exc}")
                     failures += 1
