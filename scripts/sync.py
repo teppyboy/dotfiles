@@ -95,6 +95,13 @@ MAX_BASE64_CANDIDATES = 256
 MAX_BASE64_BYTES = 1024 * 1024
 MAX_BASE64_TOTAL_BYTES = 2 * 1024 * 1024
 MAX_BASE64_CHARS = (MAX_BASE64_BYTES * 4 // 3) + 4
+_BASE64_CONTIGUOUS_RE = re.compile(
+    r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{8,}={0,2})(?![A-Za-z0-9+/_=-])"
+)
+_BASE64_WRAPPED_RE = re.compile(
+    r"(?<![A-Za-z0-9+/_-])((?:[A-Za-z0-9+/_-]{4}[ \t\r\n]+)+"
+    r"[A-Za-z0-9+/_-]{2,4}={0,2})(?![A-Za-z0-9+/_=-])"
+)
 CREDENTIAL_MARKERS = (
     re.compile(
         r"(?im)(?<![A-Za-z0-9])(?:[A-Za-z][A-Za-z0-9_-]*?(?:api[_-]?key|"
@@ -214,24 +221,47 @@ class _Base64Budget:
     decoded_bytes: int = 0
 
 
+def _iter_base64_matches(text: str):
+    """Yield contiguous and wrapped matches in start order without buffering."""
+    iterators = [
+        pattern.finditer(text)
+        for pattern in (_BASE64_CONTIGUOUS_RE, _BASE64_WRAPPED_RE)
+    ]
+    current = []
+    for iterator in iterators:
+        try:
+            current.append(next(iterator))
+        except StopIteration:
+            current.append(None)
+    while any(match is not None for match in current):
+        index = min(
+            (index for index, match in enumerate(current) if match is not None),
+            key=lambda index: current[index].start(),
+        )
+        match = current[index]
+        if match is None:
+            continue
+        yield match
+        try:
+            current[index] = next(iterators[index])
+        except StopIteration:
+            current[index] = None
+
+
 def _base64_variants(
-    text: str, *, depth: int = 0, budget: _Base64Budget | None = None
+    text: str,
+    *,
+    depth: int = 0,
+    budget: _Base64Budget | None = None,
+    match_iterator=None,
 ) -> tuple[str, ...]:
     """Recursively decode bounded base64 fragments with shared budgets."""
     if depth >= MAX_BASE64_DEPTH:
         return ()
     budget = budget or _Base64Budget()
-    contiguous = re.compile(
-        r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{8,}={0,2})(?![A-Za-z0-9+/_=-])"
-    )
-    wrapped = re.compile(
-        r"(?<![A-Za-z0-9+/_-])((?:[A-Za-z0-9+/_-]{4}[ \t\r\n]+)+"
-        r"[A-Za-z0-9+/_-]{2,4}={0,2})(?![A-Za-z0-9+/_=-])"
-    )
-    matches = list(contiguous.finditer(text)) + list(wrapped.finditer(text))
-    matches.sort(key=lambda match: match.start())
     variants: list[str] = []
-    for match in matches:
+    iterator = match_iterator or _iter_base64_matches
+    for match in iterator(text):
         budget.candidates += 1
         if budget.candidates > MAX_BASE64_CANDIDATES:
             raise SyncError("refusing content with too many encoded candidates")
@@ -255,7 +285,12 @@ def _base64_variants(
         if _is_text(candidate):
             variants.append(candidate)
             variants.extend(
-                _base64_variants(candidate, depth=depth + 1, budget=budget)
+                _base64_variants(
+                    candidate,
+                    depth=depth + 1,
+                    budget=budget,
+                    match_iterator=match_iterator,
+                )
             )
     return tuple(variants)
 
@@ -575,10 +610,18 @@ def check_files(
     failures = 0
     for item in entries:
         source_base = home if item.platform_root == "home" else appdata
-        source_path = (source_base / item.relative_path) if source_base else Path(item.relative_path)
+        source_path = (
+            (source_base / item.relative_path)
+            if source_base
+            else Path(item.relative_path)
+        )
         try:
             source = resolve_destination(
-                platform, item.platform_root, item.relative_path, home=home, appdata=appdata
+                platform,
+                item.platform_root,
+                item.relative_path,
+                home=home,
+                appdata=appdata,
             )
         except SyncError as exc:
             if source_path.is_symlink():

@@ -250,6 +250,34 @@ class SyncTests(unittest.TestCase):
         with self.assertRaises(sync.SyncError):
             sync.ensure_safe_content(content)
 
+    def test_base64_candidate_iterator_stops_without_materializing_all_matches(self):
+        class Match:
+            def __init__(self, position):
+                self.position = position
+
+            def start(self):
+                return self.position
+
+            def group(self, _number):
+                return "dGVzdA=="
+
+        pulls = 0
+
+        def bounded_matches(_text):
+            nonlocal pulls
+            for position in range(10_000_000):
+                pulls += 1
+                yield Match(position)
+
+        with self.assertRaises(sync.SyncError):
+            sync._base64_variants(
+                "ignored",
+                budget=sync._Base64Budget(),
+                match_iterator=bounded_matches,
+            )
+
+        self.assertLessEqual(pulls, sync.MAX_BASE64_CANDIDATES + 1)
+
     def test_bounded_reader_does_not_read_unbounded_content(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "settings.txt"
