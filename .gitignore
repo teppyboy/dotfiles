@@ -51,6 +51,13 @@ venv/
 **/*cache*
 **/private_key*
 **/private-key*
+**/*private*
+**/*keyring*
+**/*wallet*
+**/*api_key*
+**/*api-key*
+**/*apikey*
+**/private.json
 **/id_rsa*
 **/id_dsa*
 **/id_ecdsa*

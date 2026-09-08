@@ -69,6 +69,19 @@ class SyncTests(unittest.TestCase):
         with self.assertRaises(sync.SyncError):
             sync.validate_relative_path(Path("../secret"))
 
+    def test_gitignore_matches_sensitive_path_policy(self):
+        gitignore = (MODULE_PATH.parents[1] / ".gitignore").read_text(encoding="utf-8")
+        for path in (".env", "private/private.json", "keyring.json", "wallet.json", "api_key.json"):
+            self.assertTrue(sync.is_sensitive_path(Path(path)))
+        for pattern in (".env", "**/*private*", "**/*keyring*", "**/*wallet*", "**/*api_key*", "**/*api-key*", "**/*apikey*", "**/private.json"):
+            self.assertIn(pattern, gitignore)
+
+    def test_duplicate_manifest_paths_are_rejected(self):
+        item = sync.Mapping("test", "same.txt", "home", "one.txt")
+        duplicate = sync.Mapping("test", "same.txt", "home", "two.txt")
+        with tempfile.TemporaryDirectory() as temp, self.assertRaises(sync.SyncError):
+            sync.check_files((item, duplicate), Path(temp), platform="darwin", home=Path(temp))
+
     def test_manifest_paths_are_safe(self):
         for item in sync.MANIFEST:
             with self.subTest(item=item):
@@ -98,6 +111,14 @@ class SyncTests(unittest.TestCase):
             Path("configs/pi/private.jks"),
             Path("configs/pi/private.jceks"),
             Path("configs/pi/private.keystore"),
+            Path("configs/pi/.env"),
+            Path("configs/pi/.env.local"),
+            Path("configs/pi/private/private.json"),
+            Path("configs/pi/keyring.json"),
+            Path("configs/pi/wallet.json"),
+            Path("configs/pi/api_key.json"),
+            Path("configs/pi/api-key.json"),
+            Path("configs/pi/apikey.json"),
         ):
             with self.subTest(path=path):
                 self.assertTrue(sync.is_sensitive_path(path))
@@ -121,6 +142,12 @@ class SyncTests(unittest.TestCase):
             b"__API_KEY = abc",
             b"OPENAI_API_KEY = abc",
             b"MY_PASSWORD: abc",
+            b"sk_live_1234567890123456",
+            b"AIzaSyA123456789012345678901234567890",
+            b"ASIA1234567890ABCDEF",
+            b"PuTTY-User-Key-File-2: ssh-rsa",
+            b"Private-Lines: 6",
+            b"AGE-SECRET-KEY-1QQQQQQQQ",
             b'{"kty": "oct", "k": "symmetric-material"}',
             b'{"k": "symmetric-material", "kty": "OKP"}',
         ):
@@ -147,6 +174,17 @@ class SyncTests(unittest.TestCase):
             with self.subTest(content=content), self.assertRaises(sync.SyncError):
                 sync.ensure_safe_content(content)
 
+    def test_content_scanner_rejects_wrapped_and_oversized_encoded_credentials(self):
+        short = base64.b64encode(b"token=abc").decode()
+        wrapped = "\n".join(short[index : index + 4] for index in range(0, len(short), 4))
+        oversized = base64.b64encode(
+            b"x" * sync.MAX_BASE64_BYTES + b" token=abc"
+        ).decode()
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(f"value={wrapped}".encode())
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(f"value={oversized}".encode())
+
     def test_content_scanner_rejects_private_formats(self):
         for content in (
             b"-----BEGIN PGP PRIVATE KEY BLOCK-----",
@@ -160,7 +198,9 @@ class SyncTests(unittest.TestCase):
             sync.ensure_safe_content(b"x" * (sync.MAX_CONTENT_BYTES + 1))
 
     def test_content_scanner_rejects_exhausted_encoded_candidate_budget(self):
-        content = b" ".join(b"candidate%d" % index for index in range(sync.MAX_BASE64_CANDIDATES + 1))
+        content = b" ".join(
+            b"candidate%d" % index for index in range(sync.MAX_BASE64_CANDIDATES + 1)
+        )
         with self.assertRaises(sync.SyncError):
             sync.ensure_safe_content(content)
 
@@ -297,6 +337,12 @@ class SyncTests(unittest.TestCase):
             sync.copy_file(source, destination, dry_run=False, force=True)
 
             self.assertEqual(destination.read_text(encoding="utf-8"), "new")
+            self.assertEqual(list(root.glob(".destination.txt.*")), [])
+
+    def test_cli_rejects_invalid_command(self):
+        with self.assertRaises(SystemExit) as raised:
+            sync.main(["invalid"])
+        self.assertEqual(raised.exception.code, 2)
 
     def test_install_optional_and_required_mappings(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -56,6 +56,9 @@ SENSITIVE_NAMES = (
     "session",
     "cache",
     "log",
+    "private",
+    "keyring",
+    "wallet",
     "private_key",
     "private-key",
     "id_rsa",
@@ -81,12 +84,15 @@ SENSITIVE_SUFFIXES = {
 }
 SENSITIVE_NAME_PATTERNS = (
     re.compile(r"(?i)(?:^|[-_.])api[_-]?key(?:$|[-_.])"),
+    re.compile(r"(?i)(?:^|[-_.])apikey(?:$|[-_.])"),
     re.compile(r"(?i)(?:^|[-_.])private(?:[-_]key)?(?:$|[-_.])"),
     re.compile(r"(?i)(?:^|[-_.])id_(?:rsa|dsa|ecdsa|ed25519)(?:$|[-_.])"),
+    re.compile(r"(?i)^\.env(?:$|[._-])"),
 )
 MAX_CONTENT_BYTES = 8 * 1024 * 1024
 MAX_BASE64_CANDIDATES = 256
 MAX_BASE64_BYTES = 1024 * 1024
+MAX_BASE64_CHARS = (MAX_BASE64_BYTES * 4 // 3) + 4
 CREDENTIAL_MARKERS = (
     re.compile(
         r"(?im)(?<![A-Za-z0-9])(?:[A-Za-z][A-Za-z0-9_-]*?(?:api[_-]?key|"
@@ -108,6 +114,13 @@ CREDENTIAL_MARKERS = (
         r"[^{}]{0,4096}\"kty\"\s*:\s*\"(?:oct|OKP)\"[^{}]{0,4096}\}"
     ),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"\bASIA[0-9A-Z]{16}\b"),
+    re.compile(r"\bsk_live_[A-Za-z0-9]{16,}\b"),
+    re.compile(r"\bsk_live_[A-Za-z0-9_-]{8,}\b"),
+    re.compile(r"\bAIza[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"(?im)^PuTTY-User-Key-File-\d+\s*:"),
+    re.compile(r"(?im)^Private-Lines\s*:\s*\d+"),
+    re.compile(r"\bAGE-SECRET-KEY-1[A-Z0-9-]{8,}\b"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._-]{20,}"),
@@ -190,22 +203,30 @@ def _text_variants(text: str) -> tuple[str, ...]:
 
 
 def _base64_variants(text: str) -> tuple[str, ...]:
-    """Decode a bounded number of plausible base64 fragments."""
-    pattern = re.compile(
+    """Decode bounded contiguous and whitespace-wrapped base64 fragments."""
+    contiguous = re.compile(
         r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{8,}={0,2})(?![A-Za-z0-9+/_=-])"
     )
+    wrapped = re.compile(
+        r"(?<![A-Za-z0-9+/_-])((?:[A-Za-z0-9+/_-]{4}[ \t\r\n]+)+"
+        r"[A-Za-z0-9+/_-]{2,4}={0,2})(?![A-Za-z0-9+/_=-])"
+    )
+    matches = list(contiguous.finditer(text)) + list(wrapped.finditer(text))
+    matches.sort(key=lambda match: match.start())
     variants: list[str] = []
-    for index, match in enumerate(pattern.finditer(text)):
+    for index, match in enumerate(matches):
         if index >= MAX_BASE64_CANDIDATES:
             raise SyncError("refusing content with too many encoded candidates")
-        encoded = match.group(1)
+        encoded = re.sub(r"\s+", "", match.group(1))
+        if len(encoded) > MAX_BASE64_CHARS:
+            raise SyncError("refusing oversized encoded candidate")
         encoded += "=" * (-len(encoded) % 4)
         try:
             decoded = base64.b64decode(encoded, altchars=b"-_", validate=True)
         except (ValueError, binascii.Error):
             continue
         if len(decoded) > MAX_BASE64_BYTES:
-            continue
+            raise SyncError("refusing oversized encoded candidate")
         try:
             candidate = decoded.decode("utf-8")
         except UnicodeDecodeError:
@@ -236,6 +257,26 @@ def _read_bounded_content(path: Path) -> bytes:
     if len(content) > MAX_CONTENT_BYTES:
         raise SyncError(f"refusing content larger than safety limit: {path}")
     return content
+
+def _read_verified_content(path: Path, label: str) -> bytes:
+    """Read bounded content, rejecting links, hardlinks, and mid-read changes."""
+    before = _regular_file_stat(path, label)
+    if before.st_nlink > 1:
+        raise SyncError(f"refusing hardlink {label}: {path}")
+    content = _read_bounded_content(path)
+    try:
+        after = os.stat(path, follow_symlinks=False)
+    except OSError as exc:
+        raise SyncError(f"{label} changed during read: {path}") from exc
+    if (
+        after.st_dev != before.st_dev
+        or after.st_ino != before.st_ino
+        or after.st_size != before.st_size
+        or after.st_mtime_ns != before.st_mtime_ns
+    ):
+        raise SyncError(f"{label} changed during read: {path}")
+    return content
+
 
 def _reject_symlink_ancestors(path: Path) -> None:
     """Reject symlink roots or parent components before filesystem access."""
@@ -506,10 +547,7 @@ def check_files(
         for label, path in (("source", source), ("repo", repo_file)):
             if path.exists():
                 try:
-                    details = _regular_file_stat(path, label)
-                    if details.st_nlink > 1:
-                        raise SyncError(f"refusing hardlink {label}: {path}")
-                    ensure_safe_content(_read_bounded_content(path))
+                    ensure_safe_content(_read_verified_content(path, label))
                 except (OSError, SyncError) as exc:
                     print(f"unsafe {label} {path}: {exc}")
                     failures += 1
