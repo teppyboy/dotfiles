@@ -58,6 +58,7 @@ SENSITIVE_NAMES = (
     "log",
 )
 SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".db", ".sqlite", ".sqlite3"}
+SENSITIVE_NAME_PATTERNS = (re.compile(r"(?i)(?:^|[-_.])api[_-]?key(?:$|[-_.])"),)
 MAX_CONTENT_BYTES = 8 * 1024 * 1024
 MAX_BASE64_CANDIDATES = 256
 MAX_BASE64_BYTES = 1024 * 1024
@@ -89,6 +90,7 @@ def is_sensitive_path(path: Path) -> bool:
     return (
         any(
             any(name in part.casefold() for name in SENSITIVE_NAMES)
+            or any(pattern.search(part) for pattern in SENSITIVE_NAME_PATTERNS)
             for part in path.parts
         )
         or path.suffix.casefold() in SENSITIVE_SUFFIXES
@@ -154,7 +156,9 @@ def _text_variants(text: str) -> tuple[str, ...]:
 
 def _base64_variants(text: str) -> tuple[str, ...]:
     """Decode a bounded number of plausible base64 fragments."""
-    pattern = re.compile(r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{16,}={0,2})(?![A-Za-z0-9+/_=-])")
+    pattern = re.compile(
+        r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{8,}={0,2})(?![A-Za-z0-9+/_=-])"
+    )
     variants: list[str] = []
     for index, match in enumerate(pattern.finditer(text)):
         if index >= MAX_BASE64_CANDIDATES:
@@ -179,10 +183,13 @@ def _base64_variants(text: str) -> tuple[str, ...]:
 def ensure_safe_content(content: bytes) -> None:
     """Reject credential formats without exposing file contents."""
     texts = _decoded_candidates(content)
+    text_variants = tuple(
+        variant for text in texts for variant in _text_variants(text)
+    )
     variants = tuple(
         variant
-        for text in texts
-        for variant in (*_text_variants(text), *_base64_variants(text))
+        for text in text_variants
+        for variant in (text, *_base64_variants(text))
     )
     if any(marker.search(text) for text in variants for marker in CREDENTIAL_MARKERS):
         raise SyncError("refusing content that resembles a credential")
@@ -320,7 +327,9 @@ def _copy_atomically(
             try:
                 os.link(temporary, destination)
             except FileExistsError as exc:
-                raise SyncError(f"destination exists; use --force: {destination}") from exc
+                raise SyncError(
+                    f"destination exists; use --force: {destination}"
+                ) from exc
             finally:
                 if temporary.exists():
                     temporary.unlink()
@@ -344,6 +353,8 @@ def copy_file(
     if is_sensitive_path(source) or is_sensitive_path(destination):
         raise SyncError(f"refusing sensitive path: {source}")
     source_stat = _regular_file_stat(source, "source")
+    if source_stat.st_nlink > 1:
+        raise SyncError(f"refusing hardlink source: {source}")
     if destination.exists():
         destination_stat = _regular_file_stat(destination, "destination")
         if destination_stat.st_nlink > 1:

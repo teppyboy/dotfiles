@@ -80,6 +80,9 @@ class SyncTests(unittest.TestCase):
     def test_sensitive_paths_are_rejected(self):
         for path in (
             Path("configs/opencode/auth.json"),
+            Path("configs/opencode/_auth.json"),
+            Path("configs/pi/_TOKEN"),
+            Path("configs/pi/__API_KEY"),
             Path("configs/pi/session.json"),
             Path("configs/pi/private.key"),
         ):
@@ -97,6 +100,8 @@ class SyncTests(unittest.TestCase):
             b"credential: abc",
             b"cookie = abc",
             b"session: abc",
+            b"_TOKEN = abc",
+            b"__API_KEY = abc",
             b"OPENAI_API_KEY = abc",
             b"MY_PASSWORD: abc",
         ):
@@ -113,7 +118,7 @@ class SyncTests(unittest.TestCase):
             sync.ensure_safe_content(bytes((0, 1, 2)))
 
     def test_content_scanner_rejects_encoded_credentials(self):
-        encoded = base64.b64encode(b"OPENAI_API_KEY=abc").decode()
+        encoded = base64.b64encode(b"token=abc").decode()
         for content in (
             f"value={encoded}".encode(),
             b"value=OPENAI%5FAPI%5FKEY%3Dabc",
@@ -284,6 +289,33 @@ class SyncTests(unittest.TestCase):
             )
             with self.assertRaises(sync.SyncError):
                 sync.export_files((required,), repo, platform="darwin", home=home)
+
+    def test_export_install_check_round_trip(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            home.mkdir()
+            repo.mkdir()
+            source = home / ".pi" / "AGENTS.md"
+            source.parent.mkdir()
+            source.write_text("theme = 'dark'\\n", encoding="utf-8")
+            manifest = (sync.Mapping("pi", "configs/pi/AGENTS.md", "home", ".pi/AGENTS.md"),)
+
+            self.assertEqual(
+                sync.export_files(manifest, repo, platform="darwin", home=home), 1
+            )
+            source.write_text("theme = 'light'\\n", encoding="utf-8")
+            self.assertEqual(
+                sync.install_files(
+                    manifest, repo, platform="darwin", home=home, force=True
+                ),
+                1,
+            )
+            self.assertEqual(source.read_text(encoding="utf-8"), "theme = 'dark'\\n")
+            self.assertEqual(
+                sync.check_files(manifest, repo, platform="darwin", home=home), 0
+            )
 
     def test_check_files_reports_required_missing_and_safe_files(self):
         with tempfile.TemporaryDirectory() as temp:
