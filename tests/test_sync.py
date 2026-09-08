@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+import importlib.util
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+MODULE_PATH = Path(__file__).parents[1] / "scripts" / "sync.py"
+spec = importlib.util.spec_from_file_location("sync", MODULE_PATH)
+if spec is None or spec.loader is None:
+    raise RuntimeError(f"cannot load {MODULE_PATH}")
+sync = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = sync
+spec.loader.exec_module(sync)
+
+
+class SyncTests(unittest.TestCase):
+    def test_resolve_destination_supports_windows_home_and_appdata(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            appdata = root / "appdata"
+
+            self.assertEqual(
+                sync.resolve_destination(
+                    "win32", "home", ".pi/AGENTS.md", home=home, appdata=appdata
+                ),
+                home / ".pi" / "AGENTS.md",
+            )
+            self.assertEqual(
+                sync.resolve_destination(
+                    "win32",
+                    "appdata",
+                    "OpenCode/config.json",
+                    home=home,
+                    appdata=appdata,
+                ),
+                appdata / "OpenCode" / "config.json",
+            )
+
+    def test_resolve_destination_supports_macos_home(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp) / "home"
+            self.assertEqual(
+                sync.resolve_destination(
+                    "darwin", "home", ".pi/AGENTS.md", home=home, appdata=None
+                ),
+                home / ".pi" / "AGENTS.md",
+            )
+
+    def test_unsupported_platform_fails(self):
+        with tempfile.TemporaryDirectory() as temp, self.assertRaises(sync.SyncError):
+            sync.resolve_destination(
+                "linux", "home", "settings.toml", home=Path(temp), appdata=None
+            )
+
+    def test_unsupported_root_fails(self):
+        with tempfile.TemporaryDirectory() as temp, self.assertRaises(sync.SyncError):
+            sync.resolve_destination(
+                "darwin", "appdata", "settings.toml", home=Path(temp), appdata=None
+            )
+
+    def test_manifest_rejects_absolute_and_traversal_paths(self):
+        with self.assertRaises(sync.SyncError):
+            sync.validate_relative_path(Path("/absolute/path"))
+        with self.assertRaises(sync.SyncError):
+            sync.validate_relative_path(Path("../secret"))
+
+    def test_manifest_paths_are_safe(self):
+        for item in sync.MANIFEST:
+            with self.subTest(item=item):
+                sync.validate_relative_path(Path(item.repo_path))
+                sync.validate_relative_path(Path(item.relative_path))
+                self.assertFalse(sync.is_sensitive_path(Path(item.repo_path)))
+                self.assertFalse(sync.is_sensitive_path(Path(item.relative_path)))
+
+    def test_sensitive_paths_are_rejected(self):
+        for path in (
+            Path("configs/opencode/auth.json"),
+            Path("configs/pi/session.json"),
+            Path("configs/pi/private.key"),
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(sync.is_sensitive_path(path))
+
+    def test_content_scanner_rejects_credential_markers(self):
+        for content in (
+            b'api_key = "abc"',
+            b'access-token: abc',
+            b'private_key = "abc"',
+            b'password: abc',
+        ):
+            with self.subTest(content=content), self.assertRaises(sync.SyncError):
+                sync.ensure_safe_content(content)
+
+    def test_content_scanner_accepts_non_sensitive_settings(self):
+        sync.ensure_safe_content(b"theme = 'dark'\nmodel = 'default'\n")
+
+    def test_unlisted_file_is_not_exported(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            home.mkdir()
+            repo.mkdir()
+            (home / "listed.md").write_text("safe", encoding="utf-8")
+            (home / "unlisted.txt").write_text("also safe", encoding="utf-8")
+            manifest = (
+                sync.Mapping("test", "configs/listed.md", "home", "listed.md"),
+            )
+
+            copied = sync.export_files(
+                manifest,
+                repo,
+                platform="darwin",
+                home=home,
+                appdata=None,
+            )
+
+            self.assertEqual(copied, 1)
+            self.assertEqual(
+                (repo / "configs/listed.md").read_text(encoding="utf-8"), "safe"
+            )
+            self.assertFalse((repo / "unlisted.txt").exists())
+
+    def test_dry_run_does_not_copy(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source.txt"
+            destination = root / "destination.txt"
+            source.write_text("safe", encoding="utf-8")
+
+            sync.copy_file(source, destination, dry_run=True, force=False)
+
+            self.assertFalse(destination.exists())
+
+    def test_install_does_not_overwrite_without_force(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source.txt"
+            destination = root / "destination.txt"
+            source.write_text("new", encoding="utf-8")
+            destination.write_text("old", encoding="utf-8")
+
+            with self.assertRaises(sync.SyncError):
+                sync.copy_file(source, destination, dry_run=False, force=False)
+
+            self.assertEqual(destination.read_text(encoding="utf-8"), "old")
+
+    def test_force_overwrites_existing_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source.txt"
+            destination = root / "destination.txt"
+            source.write_text("new", encoding="utf-8")
+            destination.write_text("old", encoding="utf-8")
+
+            sync.copy_file(source, destination, dry_run=False, force=True)
+
+            self.assertEqual(destination.read_text(encoding="utf-8"), "new")
+
+
+if __name__ == "__main__":
+    unittest.main()
