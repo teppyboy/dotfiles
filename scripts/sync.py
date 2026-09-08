@@ -56,8 +56,24 @@ SENSITIVE_NAMES = (
     "session",
     "cache",
     "log",
+    "private_key",
+    "private-key",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
 )
-SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".db", ".sqlite", ".sqlite3"}
+SENSITIVE_SUFFIXES = {
+    ".pem",
+    ".key",
+    ".p12",
+    ".pfx",
+    ".asc",
+    ".gpg",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+}
 SENSITIVE_NAME_PATTERNS = (re.compile(r"(?i)(?:^|[-_.])api[_-]?key(?:$|[-_.])"),)
 MAX_CONTENT_BYTES = 8 * 1024 * 1024
 MAX_BASE64_CANDIDATES = 256
@@ -69,9 +85,11 @@ CREDENTIAL_MARKERS = (
         r"auth(?:entication|orization)?|token|credential(?:s)?|password|secret|"
         r"cookie|history|session)[A-Za-z0-9_-]*|api[_-]?key|access[_-]?token|"
         r"refresh[_-]?token|client[_-]?secret|private[_-]?key|auth|token|"
-        r"credentials?|password|secret|cookie|history|session)\s*[:=]"
+        r"credentials?|password|secret|cookie|history|session)\s*['\"]?\s*[:=]"
     ),
     re.compile(r"-----BEGIN [^-\n]*PRIVATE KEY-----"),
+    re.compile(r"-----BEGIN PGP PRIVATE KEY BLOCK-----"),
+    re.compile(r"(?i)['\"](?:d|p|q|dp|dq|qi)['\"]\s*:\s*['\"][^'\"]+['\"]"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
@@ -183,13 +201,9 @@ def _base64_variants(text: str) -> tuple[str, ...]:
 def ensure_safe_content(content: bytes) -> None:
     """Reject credential formats without exposing file contents."""
     texts = _decoded_candidates(content)
-    text_variants = tuple(
-        variant for text in texts for variant in _text_variants(text)
-    )
+    text_variants = tuple(variant for text in texts for variant in _text_variants(text))
     variants = tuple(
-        variant
-        for text in text_variants
-        for variant in (text, *_base64_variants(text))
+        variant for text in text_variants for variant in (text, *_base64_variants(text))
     )
     if any(marker.search(text) for text in variants for marker in CREDENTIAL_MARKERS):
         raise SyncError("refusing content that resembles a credential")
@@ -347,7 +361,11 @@ def copy_file(
     dry_run: bool,
     force: bool,
 ) -> None:
-    """Validate and copy one file, preserving existing destinations by default."""
+    """Validate and copy one file, preserving existing destinations by default.
+
+    Atomic replacement plus no-follow checks limit races. Full descriptor-relative
+    no-follow copying is not portable through Python's standard library.
+    """
     _reject_symlink_path(source)
     _reject_symlink_path(destination)
     if is_sensitive_path(source) or is_sensitive_path(destination):
@@ -460,8 +478,9 @@ def check_files(
         for label, path in (("source", source), ("repo", repo_file)):
             if path.exists():
                 try:
-                    if not path.is_file():
-                        raise SyncError(f"expected file but found non-file: {path}")
+                    details = _regular_file_stat(path, label)
+                    if details.st_nlink > 1:
+                        raise SyncError(f"refusing hardlink {label}: {path}")
                     ensure_safe_content(path.read_bytes())
                 except (OSError, SyncError) as exc:
                     print(f"unsafe {label} {path}: {exc}")
