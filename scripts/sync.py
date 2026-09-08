@@ -279,19 +279,20 @@ def _base64_variants(
         if budget.decoded_bytes > MAX_BASE64_TOTAL_BYTES:
             raise SyncError("refusing encoded content over cumulative safety budget")
         try:
-            candidate = decoded.decode("utf-8")
-        except UnicodeDecodeError:
+            candidates = _decoded_candidates(decoded)
+        except SyncError:
             continue
-        if _is_text(candidate):
-            variants.append(candidate)
-            variants.extend(
-                _base64_variants(
-                    candidate,
-                    depth=depth + 1,
-                    budget=budget,
-                    match_iterator=match_iterator,
+        for candidate in candidates:
+            for transformed in _text_variants(candidate):
+                variants.append(transformed)
+                variants.extend(
+                    _base64_variants(
+                        transformed,
+                        depth=depth + 1,
+                        budget=budget,
+                        match_iterator=match_iterator,
+                    )
                 )
-            )
     return tuple(variants)
 
 

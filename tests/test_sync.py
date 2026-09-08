@@ -190,8 +190,6 @@ class SyncTests(unittest.TestCase):
         for content in (
             f"value={encoded}".encode(),
             base64.b64encode(b'{"token": "abc"}'),
-            b"value=OPENAI%5FAPI%5FKEY%3Dabc",
-            b"value=OPENAI\\x5fAPI\\x5fKEY=abc",
             base64.b64encode(b"hf_12345678901234567890"),
             base64.b64encode(b"xoxb-12345678901234567890"),
             base64.b64encode(b"xoxp-12345678901234567890"),
@@ -200,6 +198,21 @@ class SyncTests(unittest.TestCase):
         ):
             with self.subTest(content=content), self.assertRaises(sync.SyncError):
                 sync.ensure_safe_content(content)
+
+    def test_base64_decodes_percent_encoded_credentials(self):
+        payload = b"value=OPENAI%5FAPI%5FKEY%3Dabc"
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(base64.b64encode(payload))
+
+    def test_base64_decodes_unicode_escaped_credentials(self):
+        payload = b"value=OPENAI\\x5fAPI\\x5fKEY=abc"
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(base64.b64encode(payload))
+
+    def test_base64_decodes_utf16_credentials(self):
+        payload = "token=abc".encode("utf-16")
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(base64.b64encode(payload))
 
     def test_content_scanner_rejects_nested_encoded_credentials(self):
         encoded = b"token=abc"
