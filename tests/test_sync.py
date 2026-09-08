@@ -71,16 +71,33 @@ class SyncTests(unittest.TestCase):
 
     def test_gitignore_matches_sensitive_path_policy(self):
         gitignore = (MODULE_PATH.parents[1] / ".gitignore").read_text(encoding="utf-8")
-        for path in (".env", "private/private.json", "keyring.json", "wallet.json", "api_key.json"):
+        for path in (
+            ".env",
+            "private/private.json",
+            "keyring.json",
+            "wallet.json",
+            "api_key.json",
+        ):
             self.assertTrue(sync.is_sensitive_path(Path(path)))
-        for pattern in (".env", "**/*private*", "**/*keyring*", "**/*wallet*", "**/*api_key*", "**/*api-key*", "**/*apikey*", "**/private.json"):
+        for pattern in (
+            ".env",
+            "**/*private*",
+            "**/*keyring*",
+            "**/*wallet*",
+            "**/*api_key*",
+            "**/*api-key*",
+            "**/*apikey*",
+            "**/private.json",
+        ):
             self.assertIn(pattern, gitignore)
 
     def test_duplicate_manifest_paths_are_rejected(self):
         item = sync.Mapping("test", "same.txt", "home", "one.txt")
         duplicate = sync.Mapping("test", "same.txt", "home", "two.txt")
         with tempfile.TemporaryDirectory() as temp, self.assertRaises(sync.SyncError):
-            sync.check_files((item, duplicate), Path(temp), platform="darwin", home=Path(temp))
+            sync.check_files(
+                (item, duplicate), Path(temp), platform="darwin", home=Path(temp)
+            )
 
     def test_manifest_paths_are_safe(self):
         for item in sync.MANIFEST:
@@ -150,6 +167,11 @@ class SyncTests(unittest.TestCase):
             b"AGE-SECRET-KEY-1QQQQQQQQ",
             b'{"kty": "oct", "k": "symmetric-material"}',
             b'{"k": "symmetric-material", "kty": "OKP"}',
+            b"hf_12345678901234567890",
+            b"xoxb-12345678901234567890",
+            b"xoxp-12345678901234567890",
+            b"glpat-12345678901234567890",
+            b"npm_12345678901234567890",
         ):
             with self.subTest(content=content), self.assertRaises(sync.SyncError):
                 sync.ensure_safe_content(content)
@@ -170,13 +192,37 @@ class SyncTests(unittest.TestCase):
             base64.b64encode(b'{"token": "abc"}'),
             b"value=OPENAI%5FAPI%5FKEY%3Dabc",
             b"value=OPENAI\\x5fAPI\\x5fKEY=abc",
+            base64.b64encode(b"hf_12345678901234567890"),
+            base64.b64encode(b"xoxb-12345678901234567890"),
+            base64.b64encode(b"xoxp-12345678901234567890"),
+            base64.b64encode(b"glpat-12345678901234567890"),
+            base64.b64encode(b"npm_12345678901234567890"),
         ):
             with self.subTest(content=content), self.assertRaises(sync.SyncError):
                 sync.ensure_safe_content(content)
 
+    def test_content_scanner_rejects_nested_encoded_credentials(self):
+        encoded = b"token=abc"
+        for _ in range(sync.MAX_BASE64_DEPTH):
+            encoded = base64.b64encode(encoded)
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(encoded)
+
+    def test_content_scanner_rejects_encoded_provider_credentials(self):
+        for token in (
+            b"hf_12345678901234567890",
+            b"xoxb-12345678901234567890",
+            b"glpat-12345678901234567890",
+            b"npm_12345678901234567890",
+        ):
+            with self.subTest(token=token), self.assertRaises(sync.SyncError):
+                sync.ensure_safe_content(base64.b64encode(token))
+
     def test_content_scanner_rejects_wrapped_and_oversized_encoded_credentials(self):
         short = base64.b64encode(b"token=abc").decode()
-        wrapped = "\n".join(short[index : index + 4] for index in range(0, len(short), 4))
+        wrapped = "\n".join(
+            short[index : index + 4] for index in range(0, len(short), 4)
+        )
         oversized = base64.b64encode(
             b"x" * sync.MAX_BASE64_BYTES + b" token=abc"
         ).decode()
@@ -423,6 +469,52 @@ class SyncTests(unittest.TestCase):
             source.write_text("theme = 'dark'", encoding="utf-8")
             os.link(source, linked)
             manifest = (sync.Mapping("test", "linked.txt", "home", "linked.txt"),)
+            self.assertEqual(
+                sync.check_files(manifest, repo, platform="darwin", home=home), 1
+            )
+
+    def test_export_rejects_dangling_symlink(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            home.mkdir()
+            repo.mkdir()
+            source = home / "dangling.txt"
+            try:
+                source.symlink_to(home / "missing.txt")
+            except (NotImplementedError, OSError):
+                self.skipTest("symlinks unavailable")
+            manifest = (sync.Mapping("test", "safe.txt", "home", "dangling.txt"),)
+            with self.assertRaises(sync.SyncError):
+                sync.export_files(manifest, repo, platform="darwin", home=home)
+
+    def test_install_rejects_dangling_symlink(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            home.mkdir()
+            repo.mkdir()
+            source = repo / "safe.txt"
+            source.symlink_to(repo / "missing.txt")
+            manifest = (sync.Mapping("test", "safe.txt", "home", "safe.txt"),)
+            with self.assertRaises(sync.SyncError):
+                sync.install_files(manifest, repo, platform="darwin", home=home)
+
+    def test_check_files_reports_dangling_symlink_as_unsafe(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            home.mkdir()
+            repo.mkdir()
+            source = home / "dangling.txt"
+            try:
+                source.symlink_to(home / "missing.txt")
+            except (NotImplementedError, OSError):
+                self.skipTest("symlinks unavailable")
+            manifest = (sync.Mapping("test", "safe.txt", "home", "dangling.txt"),)
             self.assertEqual(
                 sync.check_files(manifest, repo, platform="darwin", home=home), 1
             )

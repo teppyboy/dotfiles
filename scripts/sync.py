@@ -90,8 +90,10 @@ SENSITIVE_NAME_PATTERNS = (
     re.compile(r"(?i)^\.env(?:$|[._-])"),
 )
 MAX_CONTENT_BYTES = 8 * 1024 * 1024
+MAX_BASE64_DEPTH = 3
 MAX_BASE64_CANDIDATES = 256
 MAX_BASE64_BYTES = 1024 * 1024
+MAX_BASE64_TOTAL_BYTES = 2 * 1024 * 1024
 MAX_BASE64_CHARS = (MAX_BASE64_BYTES * 4 // 3) + 4
 CREDENTIAL_MARKERS = (
     re.compile(
@@ -124,6 +126,10 @@ CREDENTIAL_MARKERS = (
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._-]{20,}"),
+    re.compile(r"\bhf_[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\bxox[bp]-[A-Za-z0-9-]{20,}\b"),
+    re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\bnpm_[A-Za-z0-9_-]{20,}\b"),
 )
 
 
@@ -202,8 +208,19 @@ def _text_variants(text: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(variants))
 
 
-def _base64_variants(text: str) -> tuple[str, ...]:
-    """Decode bounded contiguous and whitespace-wrapped base64 fragments."""
+@dataclass
+class _Base64Budget:
+    candidates: int = 0
+    decoded_bytes: int = 0
+
+
+def _base64_variants(
+    text: str, *, depth: int = 0, budget: _Base64Budget | None = None
+) -> tuple[str, ...]:
+    """Recursively decode bounded base64 fragments with shared budgets."""
+    if depth >= MAX_BASE64_DEPTH:
+        return ()
+    budget = budget or _Base64Budget()
     contiguous = re.compile(
         r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{8,}={0,2})(?![A-Za-z0-9+/_=-])"
     )
@@ -214,8 +231,9 @@ def _base64_variants(text: str) -> tuple[str, ...]:
     matches = list(contiguous.finditer(text)) + list(wrapped.finditer(text))
     matches.sort(key=lambda match: match.start())
     variants: list[str] = []
-    for index, match in enumerate(matches):
-        if index >= MAX_BASE64_CANDIDATES:
+    for match in matches:
+        budget.candidates += 1
+        if budget.candidates > MAX_BASE64_CANDIDATES:
             raise SyncError("refusing content with too many encoded candidates")
         encoded = re.sub(r"\s+", "", match.group(1))
         if len(encoded) > MAX_BASE64_CHARS:
@@ -227,12 +245,18 @@ def _base64_variants(text: str) -> tuple[str, ...]:
             continue
         if len(decoded) > MAX_BASE64_BYTES:
             raise SyncError("refusing oversized encoded candidate")
+        budget.decoded_bytes += len(decoded)
+        if budget.decoded_bytes > MAX_BASE64_TOTAL_BYTES:
+            raise SyncError("refusing encoded content over cumulative safety budget")
         try:
             candidate = decoded.decode("utf-8")
         except UnicodeDecodeError:
             continue
         if _is_text(candidate):
             variants.append(candidate)
+            variants.extend(
+                _base64_variants(candidate, depth=depth + 1, budget=budget)
+            )
     return tuple(variants)
 
 
@@ -240,8 +264,11 @@ def ensure_safe_content(content: bytes) -> None:
     """Reject credential formats without exposing file contents."""
     texts = _decoded_candidates(content)
     text_variants = tuple(variant for text in texts for variant in _text_variants(text))
+    budget = _Base64Budget()
     variants = tuple(
-        variant for text in text_variants for variant in (text, *_base64_variants(text))
+        variant
+        for text in text_variants
+        for variant in (text, *_base64_variants(text, budget=budget))
     )
     if any(marker.search(text) for text in variants for marker in CREDENTIAL_MARKERS):
         raise SyncError("refusing content that resembles a credential")
@@ -258,6 +285,7 @@ def _read_bounded_content(path: Path) -> bytes:
         raise SyncError(f"refusing content larger than safety limit: {path}")
     return content
 
+
 def _read_verified_content(path: Path, label: str) -> bytes:
     """Read bounded content, rejecting links, hardlinks, and mid-read changes."""
     before = _regular_file_stat(path, label)
@@ -273,6 +301,7 @@ def _read_verified_content(path: Path, label: str) -> bytes:
         or after.st_ino != before.st_ino
         or after.st_size != before.st_size
         or after.st_mtime_ns != before.st_mtime_ns
+        or after.st_nlink != before.st_nlink
     ):
         raise SyncError(f"{label} changed during read: {path}")
     return content
@@ -459,6 +488,7 @@ def copy_file(
         or current_stat.st_ino != source_stat.st_ino
         or current_stat.st_size != source_stat.st_size
         or current_stat.st_mtime_ns != source_stat.st_mtime_ns
+        or current_stat.st_nlink != source_stat.st_nlink
     ):
         raise SyncError(f"source changed during read: {source}")
     action = "would copy" if dry_run else "copy"
@@ -486,6 +516,8 @@ def export_files(
             platform, item.platform_root, item.relative_path, home=home, appdata=appdata
         )
         destination = _safe_join(repo_root, item.repo_path, label="repository")
+        if source.is_symlink():
+            raise SyncError(f"refusing symlink source: {source}")
         if not source.exists():
             if item.required:
                 raise SyncError(f"required source file not found: {source}")
@@ -516,6 +548,8 @@ def install_files(
         destination = resolve_destination(
             platform, item.platform_root, item.relative_path, home=home, appdata=appdata
         )
+        if source.is_symlink():
+            raise SyncError(f"refusing symlink source: {source}")
         if not source.exists():
             if item.required:
                 raise SyncError(f"required repository file not found: {source}")
@@ -540,12 +574,32 @@ def check_files(
     home, appdata = _defaults(platform, home, appdata)
     failures = 0
     for item in entries:
-        source = resolve_destination(
-            platform, item.platform_root, item.relative_path, home=home, appdata=appdata
-        )
-        repo_file = _safe_join(repo_root, item.repo_path, label="repository")
+        source_base = home if item.platform_root == "home" else appdata
+        source_path = (source_base / item.relative_path) if source_base else Path(item.relative_path)
+        try:
+            source = resolve_destination(
+                platform, item.platform_root, item.relative_path, home=home, appdata=appdata
+            )
+        except SyncError as exc:
+            if source_path.is_symlink():
+                print(f"unsafe source {source_path}: {exc}")
+                failures += 1
+                source = None
+            else:
+                raise
+        try:
+            repo_file = _safe_join(repo_root, item.repo_path, label="repository")
+        except SyncError as exc:
+            repo_file = repo_root / item.repo_path
+            print(f"unsafe repo {repo_file}: {exc}")
+            failures += 1
         for label, path in (("source", source), ("repo", repo_file)):
-            if path.exists():
+            if path is None:
+                continue
+            if path.is_symlink():
+                print(f"unsafe {label} {path}: symlink")
+                failures += 1
+            elif path.exists():
                 try:
                     ensure_safe_content(_read_verified_content(path, label))
                 except (OSError, SyncError) as exc:
@@ -553,9 +607,6 @@ def check_files(
                     failures += 1
                 else:
                     print(f"ok {label} {path}")
-            elif path.is_symlink():
-                print(f"unsafe {label} {path}: dangling symlink")
-                failures += 1
             elif item.required:
                 print(f"missing required {label} {path}")
                 failures += 1

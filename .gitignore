@@ -49,6 +49,7 @@ venv/
 **/*history*
 **/*session*
 **/*cache*
+**/*log*
 **/private_key*
 **/private-key*
 **/*private*
@@ -58,6 +59,11 @@ venv/
 **/*api-key*
 **/*apikey*
 **/private.json
+**/*hf_*
+**/*xoxb-*
+**/*xoxp-*
+**/*glpat-*
+**/*npm_*
 **/id_rsa*
 **/id_dsa*
 **/id_ecdsa*
