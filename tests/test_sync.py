@@ -87,9 +87,9 @@ class SyncTests(unittest.TestCase):
     def test_content_scanner_rejects_credential_markers(self):
         for content in (
             b'api_key = "abc"',
-            b'access-token: abc',
+            b"access-token: abc",
             b'private_key = "abc"',
-            b'password: abc',
+            b"password: abc",
         ):
             with self.subTest(content=content), self.assertRaises(sync.SyncError):
                 sync.ensure_safe_content(content)
@@ -106,9 +106,7 @@ class SyncTests(unittest.TestCase):
             repo.mkdir()
             (home / "listed.md").write_text("safe", encoding="utf-8")
             (home / "unlisted.txt").write_text("also safe", encoding="utf-8")
-            manifest = (
-                sync.Mapping("test", "configs/listed.md", "home", "listed.md"),
-            )
+            manifest = (sync.Mapping("test", "configs/listed.md", "home", "listed.md"),)
 
             copied = sync.export_files(
                 manifest,
