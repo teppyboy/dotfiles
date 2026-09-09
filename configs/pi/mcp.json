@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "context-mode": {
+      "command": "context-mode"
+    },
+    "chrome-devtools-mcp": {
+      "command": "pnpx chrome-devtools-mcp@latest --autoConnect"
+    },
+    "exa": {
+      "url": "${PI_API_BASE_URL}"
+    }
+  }
+}

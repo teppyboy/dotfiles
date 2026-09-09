@@ -1,0 +1,18 @@
+{
+  "primary": "9router",
+  "fetchTimeoutMs": 30000,
+  "providers": [
+    {
+      "id": "9router-alice",
+      "name": "9router (Alice)",
+      "baseURL": "${OPENCODE_API_BASE_URL}",
+      "apiKey": "${OPENCODE_API_KEY}"
+    },
+    {
+      "id": "headroom-proxy",
+      "name": "Headroom Proxy",
+      "baseURL": "${OPENCODE_API_BASE_URL}",
+      "apiKey": "${OPENCODE_API_KEY}"
+    }
+  ]
+}

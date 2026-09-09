@@ -1,0 +1,628 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    "@franlol/opencode-md-table-formatter@latest",
+    "opencode-background-agents@latest",
+    "opencode-pty@latest",
+    "opencode-vibeguard@latest",
+    "@plannotator/opencode@latest",
+    "@dietrichgebert/ponytail",
+    "${OPENCODE_LOCAL_PLUGIN_PATH}"
+  ],
+  "mcp": {
+    "chrome-devtools-mcp": {
+      "type": "local",
+      "command": [
+        "pnpx",
+        "chrome-devtools-mcp@latest",
+        "--autoConnect"
+      ]
+    },
+    "context7": {
+      "type": "remote",
+      "url": "${OPENCODE_API_BASE_URL}",
+      "enabled": true
+    },
+    "exa": {
+      "type": "remote",
+      "url": "${OPENCODE_API_BASE_URL}",
+      "enabled": true
+    },
+    "gh_grep": {
+      "type": "remote",
+      "url": "${OPENCODE_API_BASE_URL}",
+      "enabled": true
+    },
+    "headroom": {
+      "type": "local",
+      "command": [
+        "${OPENCODE_HEADROOM_COMMAND}",
+        "mcp",
+        "serve"
+      ],
+      "enabled": true
+    }
+  },
+  "provider": {
+    "ds2api": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "DeepSeek (DS2API)",
+      "options": {
+        "baseURL": "${OPENCODE_API_BASE_URL}",
+        "apiKey": "${OPENCODE_API_KEY}"
+      },
+      "models": {
+        "deepseek-v4-flash": {
+          "name": "DeepSeek: V4 Flash",
+          "limit": {
+            "context": 1048576,
+            "output": 393216
+          }
+        },
+        "deepseek-v4-flash-nothinking": {
+          "name": "DeepSeek: V4 Flash No Thinking",
+          "limit": {
+            "context": 1048576,
+            "output": 393216
+          }
+        },
+        "deepseek-v4-pro": {
+          "name": "DeepSeek: V4 Pro",
+          "limit": {
+            "context": 1048576,
+            "output": 393216
+          }
+        },
+        "deepseek-v4-pro-nothinking": {
+          "name": "DeepSeek: V4 Pro No Thinking",
+          "limit": {
+            "context": 1048576,
+            "output": 393216
+          }
+        },
+        "deepseek-v4-flash-search": {
+          "name": "DeepSeek: V4 Flash Search",
+          "limit": {
+            "context": 1048576,
+            "output": 393216
+          }
+        },
+        "deepseek-v4-flash-search-nothinking": {
+          "name": "DeepSeek: V4 Flash Search No Thinking",
+          "limit": {
+            "context": 1048576,
+            "output": 393216
+          }
+        },
+        "deepseek-v4-pro-search": {
+          "name": "DeepSeek: V4 Pro Search",
+          "limit": {
+            "context": 1048576,
+            "output": 393216
+          }
+        },
+        "deepseek-v4-pro-search-nothinking": {
+          "name": "DeepSeek: V4 Pro Search No Thinking",
+          "limit": {
+            "context": 1048576,
+            "output": 393216
+          }
+        },
+        "deepseek-v4-vision": {
+          "name": "DeepSeek: V4 Vision",
+          "limit": {
+            "context": 1048576,
+            "output": 393216
+          }
+        },
+        "deepseek-v4-vision-nothinking": {
+          "name": "DeepSeek: V4 Vision No Thinking",
+          "limit": {
+            "context": 1048576,
+            "output": 393216
+          }
+        }
+      }
+    },
+    "dichvuright-ai": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "dichvuright.ai",
+      "options": {
+        "baseURL": "${OPENCODE_API_BASE_URL}"
+      },
+      "models": {
+        "gpt-5.6-sol": {
+          "name": "GPT-5.6 Sol (bri got scammed)",
+          "attachment": true,
+          "reasoning": true,
+          "temperature": true,
+          "tool_call": true,
+          "limit": {
+            "context": 1000000,
+            "output": 1000000
+          },
+          "variants": {
+            "high": {
+              "reasoningEffort": "high",
+              "textVerbosity": "low",
+              "reasoningSummary": "auto"
+            },
+            "low": {
+              "reasoningEffort": "low",
+              "textVerbosity": "low",
+              "reasoningSummary": "auto"
+            }
+          }
+        }
+      }
+    },
+    "agentrouter-openai": {
+      "name": "AgentRouter",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "${OPENCODE_API_BASE_URL}",
+        "apiKey": "${OPENCODE_API_KEY}"
+      },
+      "models": {
+        "claude-opus-4-8": {
+          "name": "Claude Opus 4.8"
+        },
+        "claude-opus-5": {
+          "name": "Claude Opus 5"
+        },
+        "gpt-5.6-sol": {
+          "name": "GPT-5.6 Sol"
+        }
+      }
+    },
+    "fpt-ai": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "FPT AI",
+      "options": {
+        "baseURL": "${OPENCODE_API_BASE_URL}",
+        "apiKey": "${OPENCODE_API_KEY}"
+      },
+      "models": {
+        "DeepSeek-V4-Flash": {
+          "name": "DeepSeek-V4-Flash",
+          "attachment": false,
+          "temperature": true,
+          "tool_call": true,
+          "cost": {
+            "input": 0.14,
+            "output": 0.28
+          },
+          "limit": {
+            "context": 200000,
+            "output": 200000
+          },
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "Qwen3.6-27B": {
+          "name": "Qwen3.6-27B",
+          "attachment": false,
+          "temperature": true,
+          "tool_call": true,
+          "cost": {
+            "input": 0.3,
+            "output": 3.25
+          },
+          "limit": {
+            "context": 262144,
+            "output": 262144
+          },
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "GLM-5.1": {
+          "name": "GLM-5.1",
+          "attachment": false,
+          "temperature": true,
+          "tool_call": true,
+          "cost": {
+            "input": 1.4,
+            "output": 4.4
+          },
+          "limit": {
+            "context": 128000,
+            "output": 128000
+          },
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "GLM-5.2": {
+          "name": "GLM-5.2",
+          "attachment": false,
+          "temperature": true,
+          "tool_call": true,
+          "cost": {
+            "input": 1.4,
+            "output": 4.4
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "Llama-3.3-70B-Instruct": {
+          "name": "Llama-3.3-70B-Instruct",
+          "attachment": false,
+          "temperature": true,
+          "tool_call": true,
+          "cost": {
+            "input": 0.21,
+            "output": 0.45
+          },
+          "limit": {
+            "context": 32000,
+            "output": 32000
+          },
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "Qwen2.5-VL-7B-Instruct": {
+          "name": "Qwen2.5-VL-7B-Instruct",
+          "attachment": true,
+          "temperature": true,
+          "tool_call": false,
+          "cost": {
+            "input": 0.77,
+            "output": 0.77
+          },
+          "limit": {
+            "context": 33000,
+            "output": 33000
+          },
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "SaoLa3.1-medium": {
+          "name": "SaoLa3.1-medium",
+          "attachment": false,
+          "temperature": true,
+          "tool_call": true,
+          "cost": {
+            "input": 0.17,
+            "output": 0.19
+          },
+          "limit": {
+            "context": 32000,
+            "output": 32000
+          },
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "gemma-3-27b-it": {
+          "name": "gemma-3-27b-it",
+          "attachment": true,
+          "temperature": true,
+          "tool_call": true,
+          "cost": {
+            "input": 0.11,
+            "output": 0.17
+          },
+          "limit": {
+            "context": 128000,
+            "output": 128000
+          },
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "gemma-4-26B-A4B-it": {
+          "name": "gemma-4-26B-A4B-it",
+          "attachment": true,
+          "temperature": true,
+          "tool_call": true,
+          "cost": {
+            "input": 0.14,
+            "output": 0.4
+          },
+          "limit": {
+            "context": 262000,
+            "output": 262000
+          },
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "gemma-4-31B-it": {
+          "name": "gemma-4-31B-it",
+          "attachment": true,
+          "temperature": true,
+          "tool_call": true,
+          "cost": {
+            "input": 0.15,
+            "output": 0.45
+          },
+          "limit": {
+            "context": 262000,
+            "output": 262000
+          },
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "gpt-oss-120b": {
+          "name": "gpt-oss-120b",
+          "attachment": false,
+          "temperature": true,
+          "tool_call": true,
+          "cost": {
+            "input": 0.14,
+            "output": 0.61
+          },
+          "limit": {
+            "context": 128000,
+            "output": 128000
+          },
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "gpt-oss-20b": {
+          "name": "gpt-oss-20b",
+          "attachment": false,
+          "temperature": true,
+          "tool_call": true,
+          "cost": {
+            "input": 0.05,
+            "output": 0.2
+          },
+          "limit": {
+            "context": 128000,
+            "output": 128000
+          },
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "permission": {
+    "task": "deny",
+    "context7_*": "deny",
+    "exa_*": "deny",
+    "gh_grep_*": "deny",
+    "kagi_*": "deny",
+    "webfetch": "deny",
+    "worktree_*": "deny"
+  },
+  "agent": {
+    "researcher": {
+      "permission": {
+        "context7_*": "allow",
+        "exa_*": "allow",
+        "gh_grep_*": "allow",
+        "kagi_*": "deny",
+        "webfetch": "allow",
+        "write": "deny",
+        "edit": "deny",
+        "plan_read": "deny",
+        "todoread": "deny",
+        "bash": {
+          "*": "deny",
+          "gh repo view*": "allow",
+          "gh pr view*": "allow",
+          "gh pr list*": "allow",
+          "gh issue view*": "allow",
+          "gh issue list*": "allow",
+          "gh release view*": "allow",
+          "gh release list*": "allow",
+          "gh run view*": "allow",
+          "gh run list*": "allow",
+          "gh workflow list*": "allow",
+          "gh search *": "allow",
+          "gh api *": "allow",
+          "npm view*": "allow",
+          "npm info*": "allow",
+          "npm show*": "allow",
+          "pip show*": "allow",
+          "pip index*": "allow",
+          "cargo search*": "allow",
+          "cargo info*": "allow",
+          "man *": "allow",
+          "tldr *": "allow",
+          "dig *": "allow",
+          "nslookup *": "allow",
+          "whois *": "allow",
+          "host *": "${OPENCODE_API_BASE_URL}",
+          "jq *": "allow",
+          "head *": "allow",
+          "tail *": "allow",
+          "base64 *": "allow",
+          "grep *": "allow",
+          "rg *": "allow",
+          "wc *": "allow",
+          "sort *": "allow",
+          "uniq *": "allow",
+          "cut *": "allow",
+          "awk *": "allow",
+          "tr *": "allow"
+        }
+      }
+    },
+    "scribe": {
+      "permission": {
+        "bash": {
+          "*": "deny"
+        },
+        "edit": "allow",
+        "glob": "allow",
+        "read": "allow",
+        "write": "allow",
+        "plan_read": "deny",
+        "todoread": "deny"
+      }
+    },
+    "coder": {
+      "permission": {
+        "context7_*": "deny",
+        "exa_*": "deny",
+        "gh_grep_*": "deny",
+        "read": "allow",
+        "write": "allow",
+        "edit": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "bash": "allow",
+        "plan_read": "deny",
+        "todoread": "deny"
+      }
+    },
+    "reviewer": {
+      "temperature": 0.1,
+      "permission": {
+        "edit": "deny",
+        "write": "deny",
+        "bash": {
+          "*": "deny",
+          "git diff*": "allow",
+          "git log*": "allow",
+          "git show*": "allow",
+          "git blame*": "allow",
+          "rg *": "allow"
+        },
+        "plan_read": "allow",
+        "delegation_read": "allow",
+        "delegation_list": "allow"
+      }
+    },
+    "plan": {
+      "permission": {
+        "edit": "deny",
+        "write": "deny",
+        "bash": {
+          "*": "deny"
+        },
+        "task": "allow",
+        "worktree_*": "allow"
+      }
+    },
+    "build": {
+      "prompt": "You are a **build orchestrator**. You coordinate implementation through delegation - you do NOT implement directly.\\\\\\\\n\\\\\\\\n## Your Role\\\\\\\\n- Delegate implementation to `coder`\\\\\\\\n- Delegate documentation to `scribe`\\\\\\\\n- Delegate codebase analysis to `explore`\\\\\\\\n- Delegate external research to `researcher`\\\\\\\\n- Interpret results and decide next steps\\\\\\\\n\\\\\\\\n## Critical Constraint\\\\\\\\nYou CANNOT edit files or run commands directly. For ALL implementation and verification, delegate to `coder`.",
+      "permission": {
+        "edit": "deny",
+        "write": "deny",
+        "bash": {
+          "*": "deny"
+        },
+        "task": "allow",
+        "worktree_*": "allow"
+      }
+    },
+    "explore": {
+      "permission": {
+        "edit": "deny",
+        "write": "deny",
+        "plan_read": "deny",
+        "todoread": "deny",
+        "bash": {
+          "*": "deny",
+          "ls *": "allow",
+          "tree *": "allow",
+          "pwd": "allow",
+          "cat *": "allow",
+          "head *": "allow",
+          "tail *": "allow",
+          "wc *": "allow",
+          "file *": "allow",
+          "stat *": "allow",
+          "grep *": "allow",
+          "rg *": "allow",
+          "find *": "allow",
+          "git status*": "allow",
+          "git log*": "allow",
+          "git diff*": "allow",
+          "git show*": "allow",
+          "git blame*": "allow",
+          "git branch*": "allow",
+          "git ls-files*": "allow",
+          "uname*": "allow",
+          "hostname": "${OPENCODE_API_BASE_URL}",
+          "whoami": "allow",
+          "which *": "allow",
+          "realpath *": "allow"
+        }
+      }
+    }
+  },
+  "instructions": [
+    "./tools/philosophy.md"
+  ]
+}

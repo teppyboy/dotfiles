@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -177,6 +178,9 @@ class SyncTests(unittest.TestCase):
             with self.subTest(content=content), self.assertRaises(sync.SyncError):
                 sync.ensure_safe_content(content)
 
+    def test_content_scanner_ignores_provider_prefix_substrings_in_package_names(self):
+        sync.ensure_safe_content(b'"npm:@juicesharp/rpiv-ask-user-question"')
+
     def test_content_scanner_rejects_utf16_and_utf32_credentials(self):
         for encoding in ("utf-16", "utf-32"):
             with self.subTest(encoding=encoding), self.assertRaises(sync.SyncError):
@@ -204,7 +208,7 @@ class SyncTests(unittest.TestCase):
     def test_content_scanner_rejects_benign_uppercase_short_token_value(self):
         # Current fail-closed Base64 screening rejects short uppercase words such as TRUE.
         with self.assertRaises(sync.SyncError):
-            sync.ensure_safe_content(b"mode = TRUE")
+            sync.ensure_safe_content(b"token = TRUE")
 
     def test_text_transform_rejects_deeper_pending_candidate(self):
         encoded = "token=abc"
@@ -369,6 +373,339 @@ class SyncTests(unittest.TestCase):
 
     def test_content_scanner_accepts_non_sensitive_settings(self):
         sync.ensure_safe_content(b"theme = 'dark'\\nmodel = 'default'\\n")
+
+    def test_mapping_modes_and_sanitized_config(self):
+        self.assertTrue(
+            {"file", "sanitized_json", "sanitized_jsonc", "directory"}.issuperset(
+                {item.mode for item in sync.MANIFEST}
+            )
+        )
+        self.assertIn("file", {item.mode for item in sync.MANIFEST})
+        dcp = next(
+            item for item in sync.MANIFEST if item.relative_path.endswith("dcp.jsonc")
+        )
+        self.assertEqual(dcp.mode, "file")
+        source = '{"baseURL":"https://private.example/v1","apiKey":"live-value","nested":{"token":"x"}}'
+        result = json.loads(sync.sanitize_config(source, "opencode"))
+        self.assertEqual(result["baseURL"], "${OPENCODE_API_BASE_URL}")
+        self.assertEqual(result["apiKey"], "${OPENCODE_API_KEY}")
+        self.assertEqual(result["nested"]["token"], "${OPENCODE_API_KEY}")
+        self.assertNotIn("private.example", sync.sanitize_config(source, "opencode"))
+        self.assertNotIn("live-value", sync.sanitize_config(source, "opencode"))
+
+    def test_jsonc_comment_replacement_preserves_malformed_adjacency(self):
+        source = '{"key" // comment\n "value": 1}'
+        with self.assertRaises(sync.SyncError):
+            sync.sanitize_config(source, "opencode", jsonc=True)
+
+    def test_jsonc_sanitization_preserves_unrelated_urls(self):
+        source = '{\n // comment\n "mcp": {"url": "https://private.example/v1"},\n "label": "https://public.example/docs",\n}'
+        result = json.loads(sync.sanitize_config(source, "opencode", jsonc=True))
+        self.assertEqual(result["mcp"]["url"], "${OPENCODE_API_BASE_URL}")
+        self.assertEqual(result["label"], "https://public.example/docs")
+
+    def test_sanitizer_preserves_unrelated_documentation_url(self):
+        source = '{"documentation":"https://public.example/docs"}'
+        result = json.loads(sync.sanitize_config(source, "opencode"))
+        self.assertEqual(result["documentation"], "https://public.example/docs")
+
+    def test_sanitizer_replaces_normalized_secret_key_variants(self):
+        source = json.dumps(
+            {
+                "api-key": "live",
+                "access-token": "live",
+                "client-secret": "live",
+                "private-key": "live",
+            }
+        )
+        result = json.loads(sync.sanitize_config(source, "opencode"))
+        for key in json.loads(source):
+            self.assertEqual(result[key], "${OPENCODE_API_KEY}")
+
+    def test_sanitizer_replaces_pi_mcp_endpoint(self):
+        source = json.dumps({"mcpServers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}})
+        result = json.loads(sync.sanitize_config(source, "pi"))
+        self.assertEqual(result["mcpServers"]["exa"]["url"], "${PI_API_BASE_URL}")
+
+    def test_sanitizer_rejects_unknown_credential_field(self):
+        with self.assertRaises(sync.SyncError):
+            sync.sanitize_config('{"mysterySecret":"value"}', "opencode")
+
+    def test_directory_content_rejects_binary_base64(self):
+        path = Path("plugins") / "binary.ts"
+        with self.assertRaises(sync.SyncError):
+            sync._ensure_directory_content(b"AAEC", path)
+
+    def test_nested_directory_binary_base64_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            source = home / ".config" / "opencode" / "plugins"
+            source.mkdir(parents=True)
+            repo.mkdir()
+            (source / "nested").mkdir()
+            (source / "nested" / "binary.ts").write_bytes(b"AAEC")
+            manifest = (
+                sync.Mapping(
+                    "opencode",
+                    "configs/opencode/plugins",
+                    "home",
+                    ".config/opencode/plugins",
+                    mode="directory",
+                ),
+            )
+            with self.assertRaises(sync.SyncError):
+                sync.export_files(manifest, repo, platform="darwin", home=home)
+            self.assertFalse(
+                (repo / "configs/opencode/plugins/nested/binary.ts").exists()
+            )
+
+    def test_directory_content_rejects_deep_percent_transform(self):
+        encoded = "token=abc"
+        for _ in range(sync.MAX_TEXT_TRANSFORM_DEPTH + 1):
+            encoded = encoded.replace("%", "%25").replace("=", "%3D")
+        with self.assertRaises(sync.SyncError):
+            sync._ensure_directory_content(encoded.encode(), Path("plugins/deep.ts"))
+
+    def test_directory_entries_propagates_walk_errors(self):
+        def failing_walk(*args, **kwargs):
+            kwargs["onerror"](OSError("walk failed"))
+            yield from ()
+
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "plugins"
+            source.mkdir()
+            with mock.patch.object(
+                sync.os, "walk", side_effect=failing_walk
+            ), self.assertRaises(sync.SyncError):
+                sync._directory_entries(source)
+
+    def test_directory_export_skips_excluded_entries(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            source = home / ".config" / "opencode" / "plugins"
+            source.mkdir(parents=True)
+            repo.mkdir()
+            (source / "safe.ts").write_text("export default {};", encoding="utf-8")
+            (source / "worktree").mkdir()
+            (source / "worktree" / "state.ts").write_text(
+                "export const state = {};", encoding="utf-8"
+            )
+            (source / "auth.json").write_text("{}", encoding="utf-8")
+            (source / "node_modules").mkdir()
+            (source / "node_modules" / "x.js").write_text("x", encoding="utf-8")
+            for lock_name in ("bun.lock", "BUN.LOCKB"):
+                (source / lock_name).write_text("lock", encoding="utf-8")
+            sibling = source.parent / "sibling.ts"
+            sibling.write_text("sibling", encoding="utf-8")
+            manifest = (
+                sync.Mapping(
+                    "opencode",
+                    "configs/opencode/plugins",
+                    "home",
+                    ".config/opencode/plugins",
+                    mode="directory",
+                ),
+            )
+            self.assertEqual(
+                sync.export_files(manifest, repo, platform="darwin", home=home), 2
+            )
+            self.assertTrue((repo / "configs/opencode/plugins/safe.ts").exists())
+            self.assertTrue(
+                (repo / "configs/opencode/plugins/worktree/state.ts").exists()
+            )
+            self.assertFalse((repo / "configs/opencode/plugins/auth.json").exists())
+            self.assertFalse(
+                (repo / "configs/opencode/plugins/node_modules/x.js").exists()
+            )
+            self.assertFalse((repo / "configs/opencode/plugins/bun.lock").exists())
+            self.assertFalse((repo / "configs/opencode/plugins/BUN.LOCKB").exists())
+            self.assertFalse((repo / "configs/opencode/sibling.ts").exists())
+
+    def test_machine_paths_are_rejected_in_raw_and_directory_files(self):
+        for content in (
+            b"D:\\Projects\\repo",
+            b"/tmp/repo",
+            b"~/repo",
+            b"\\\\server\\share\\repo",
+        ):
+            with self.subTest(content=content), self.assertRaises(sync.SyncError):
+                sync.ensure_safe_content(content)
+
+    def test_nested_directory_credentials_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            source = home / ".config" / "opencode" / "plugins"
+            source.mkdir(parents=True)
+            repo.mkdir()
+            (source / "nested").mkdir()
+            (source / "nested" / "unsafe.ts").write_text(
+                'const token = "live";', encoding="utf-8"
+            )
+            (source / "nested" / "provider.ts").write_text(
+                'const OPENAI_API_KEY = "live";', encoding="utf-8"
+            )
+            (source / "nested" / "query.ts").write_text(
+                'const endpoint = "https://example.test/mcp?token=live";',
+                encoding="utf-8",
+            )
+            manifest = (
+                sync.Mapping(
+                    "opencode",
+                    "configs/opencode/plugins",
+                    "home",
+                    ".config/opencode/plugins",
+                    mode="directory",
+                ),
+            )
+            with self.assertRaises(sync.SyncError):
+                sync.export_files(manifest, repo, platform="darwin", home=home)
+            self.assertFalse(
+                (repo / "configs/opencode/plugins/nested/unsafe.ts").exists()
+            )
+
+    def test_directory_preserves_escaped_backslashes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "source.ts"
+            original = r'const pattern = "\\\\n";'
+            path.write_text(original, encoding="utf-8")
+            self.assertEqual(
+                sync._ensure_directory_content(path.read_bytes(), path),
+                original.encode(),
+            )
+
+    def test_sanitizer_replaces_machine_paths(self):
+        for value in (
+            r"D:\\Projects\\repo",
+            "/" + "tmp" + "/repo",
+            "~/repo",
+            r"\\\\server\\share\\repo",
+        ):
+            source = json.dumps({"path": value})
+            output = sync.sanitize_config(source, "opencode")
+            self.assertNotIn(value, output)
+            self.assertIn("${OPENCODE_LOCAL_PATH}", output)
+
+    def test_full_manifest_export_install_check_round_trip(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            installed = root / "installed"
+            dry_repo = root / "dry-repo"
+            repo.mkdir()
+            fixtures = {}
+            for item in sync.MANIFEST:
+                source = home / Path(item.relative_path)
+                if item.mode == "directory":
+                    source.mkdir(parents=True, exist_ok=True)
+                    fixture = source / "example.md"
+                    fixture.write_text("# public fixture\\n", encoding="utf-8")
+                    fixtures[item.repo_path] = fixture
+                    continue
+                source.parent.mkdir(parents=True, exist_ok=True)
+                if item.mode == "sanitized_json":
+                    source.write_text(
+                        '{"baseURL":"https://private.example/v1","apiKey":"live-value"}',
+                        encoding="utf-8",
+                    )
+                elif item.repo_path.endswith("dcp.jsonc"):
+                    source.write_text(
+                        '{\n  // public schema\n  "$schema": "https://example.test/dcp.json",\n}\n',
+                        encoding="utf-8",
+                    )
+                else:
+                    source.write_text('{"public":true}', encoding="utf-8")
+                fixtures[item.repo_path] = source
+
+            before = {path: path.read_bytes() for path in fixtures.values()}
+            self.assertGreater(
+                sync.export_files(sync.MANIFEST, repo, platform="darwin", home=home), 0
+            )
+            self.assertEqual(
+                {path: path.read_bytes() for path in fixtures.values()}, before
+            )
+            for item in sync.MANIFEST:
+                exported = repo / item.repo_path
+                if item.mode == "directory":
+                    self.assertTrue((exported / "example.md").is_file())
+                elif item.mode.startswith("sanitized"):
+                    text = exported.read_text(encoding="utf-8")
+                    self.assertIn("${", text)
+                    self.assertNotIn("private.example", text)
+                    self.assertNotIn("live-value", text)
+                elif item.repo_path.endswith("dcp.jsonc"):
+                    self.assertIn(
+                        "// public schema", exported.read_text(encoding="utf-8")
+                    )
+
+            self.assertEqual(
+                sync.check_files(sync.MANIFEST, repo, platform="darwin", home=home), 0
+            )
+            self.assertEqual(
+                sync.export_files(
+                    sync.MANIFEST, dry_repo, platform="darwin", home=home, dry_run=True
+                ),
+                sync.export_files(
+                    sync.MANIFEST, repo, platform="darwin", home=home, dry_run=True
+                ),
+            )
+            self.assertFalse(dry_repo.exists())
+            self.assertEqual(
+                sync.install_files(
+                    sync.MANIFEST, repo, platform="darwin", home=installed, force=True
+                ),
+                sync.install_files(
+                    sync.MANIFEST,
+                    repo,
+                    platform="darwin",
+                    home=installed,
+                    dry_run=True,
+                    force=True,
+                ),
+            )
+            self.assertEqual(
+                sync.check_files(
+                    sync.MANIFEST, repo, platform="darwin", home=installed
+                ),
+                0,
+            )
+            self.assertFalse((home / ".config" / "opencode" / "auth.json").exists())
+            self.assertFalse((repo / "configs" / "opencode" / "node_modules").exists())
+
+    def test_sanitized_export_leaves_source_unchanged(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            source = home / ".pi" / "agent" / "models.json"
+            source.parent.mkdir(parents=True)
+            repo.mkdir()
+            original = (
+                '{"provider":{"baseUrl":"https://private.example","apiKey":"live"}}'
+            )
+            source.write_text(original, encoding="utf-8")
+            manifest = (
+                sync.Mapping(
+                    "pi",
+                    "configs/pi/models.json",
+                    "home",
+                    ".pi/agent/models.json",
+                    mode="sanitized_json",
+                ),
+            )
+            self.assertEqual(
+                sync.export_files(manifest, repo, platform="darwin", home=home), 1
+            )
+            exported = (repo / "configs/pi/models.json").read_text(encoding="utf-8")
+            self.assertIn("${PI_API_BASE_URL}", exported)
+            self.assertIn("${PI_PROVIDER_API_KEY}", exported)
+            self.assertEqual(source.read_text(encoding="utf-8"), original)
 
     def test_unlisted_file_is_not_exported(self):
         with tempfile.TemporaryDirectory() as temp:
