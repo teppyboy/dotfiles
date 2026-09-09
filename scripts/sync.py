@@ -260,7 +260,9 @@ def _text_variants(text: str) -> tuple[str, ...]:
                     continue
                 candidate_bytes = _utf8_size(candidate)
                 if len(seen) + 1 > MAX_TEXT_TRANSFORM_VARIANTS:
-                    raise SyncError("refusing content with too many transformed variants")
+                    raise SyncError(
+                        "refusing content with too many transformed variants"
+                    )
                 if total_bytes + candidate_bytes > MAX_TEXT_TRANSFORM_BYTES:
                     raise SyncError("refusing transformed content over safety budget")
                 raise SyncError("refusing content beyond text transform depth")

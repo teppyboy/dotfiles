@@ -193,6 +193,17 @@ class SyncTests(unittest.TestCase):
     def test_content_scanner_leaves_lowercase_short_words_unclassified(self):
         sync.ensure_safe_content(b"test")
 
+    def test_content_scanner_rejects_direct_newline_wrapped_base64_credentials(self):
+        encoded = base64.b64encode(b"token=abc").decode()
+        wrapped = "\n".join(encoded[index : index + 4] for index in range(0, len(encoded), 4))
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(wrapped.encode())
+
+    def test_content_scanner_rejects_benign_uppercase_short_token_value(self):
+        # Current fail-closed Base64 screening rejects short uppercase words such as TRUE.
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(b"mode = TRUE")
+
     def test_text_transform_rejects_deeper_pending_candidate(self):
         encoded = "token=abc"
         for _ in range(sync.MAX_TEXT_TRANSFORM_DEPTH + 1):
