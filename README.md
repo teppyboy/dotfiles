@@ -16,7 +16,7 @@ python scripts/sync.py install --force
 
 `export` copies only files and explicit directories listed in `scripts/sync.py` from user configuration locations into `configs/`. Pi settings and MCP files are copied after safety checks; Pi models and OpenCode JSON configs are sanitized to environment placeholders before export. OpenCode `plugins/`, `skills/`, `agents/`, `commands/`, and `tools/` roots are recursively synced with exclusions. `install` copies repository files back. `check` reports missing files. Missing optional files are skipped. `--dry-run` previews actions without changing files. `install` requires `--force` to overwrite existing files.
 
-Sanitized configs use `${PI_API_BASE_URL}`, `${PI_PROVIDER_API_KEY}`, `${OPENCODE_API_BASE_URL}`, `${OPENCODE_API_KEY}`, `${OPENCODE_LOCAL_PLUGIN_PATH}`, and `${OPENCODE_HEADROOM_COMMAND}`. Set these locally before using installed configs. Pi `settings.json` is intentionally copied verbatim by explicit user approval; review it manually before every commit.
+Sanitized configs use `${PI_API_BASE_URL}`, `${PI_PROVIDER_API_KEY}`, `${PI_LOCAL_PATH}`, `${OPENCODE_API_BASE_URL}`, `${OPENCODE_API_KEY}`, `${OPENCODE_LOCAL_PATH}`, `${OPENCODE_LOCAL_PLUGIN_PATH}`, and `${OPENCODE_HEADROOM_COMMAND}`. Set these locally before using installed configs. Pi `settings.json` is intentionally copied verbatim by explicit user approval; review it manually before every commit.
 
 The manifest never syncs `auth.json`, `mcp-cache.json`, history, sessions, caches, runtime state, package locks, `node_modules`, or installed `pi-mcp-adapter` source. Pi's `settings.json` retains the package declaration so Pi can reinstall it.
 

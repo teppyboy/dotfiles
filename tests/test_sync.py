@@ -422,6 +422,11 @@ class SyncTests(unittest.TestCase):
         for key in json.loads(source):
             self.assertEqual(result[key], "${OPENCODE_API_KEY}")
 
+    def test_sanitizer_replaces_pi_mcp_endpoint(self):
+        source = json.dumps({"mcpServers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}})
+        result = json.loads(sync.sanitize_config(source, "pi"))
+        self.assertEqual(result["mcpServers"]["exa"]["url"], "${PI_API_BASE_URL}")
+
     def test_sanitizer_rejects_unknown_credential_field(self):
         with self.assertRaises(sync.SyncError):
             sync.sanitize_config('{"mysterySecret":"value"}', "opencode")
@@ -485,6 +490,10 @@ class SyncTests(unittest.TestCase):
             source.mkdir(parents=True)
             repo.mkdir()
             (source / "safe.ts").write_text("export default {};", encoding="utf-8")
+            (source / "worktree").mkdir()
+            (source / "worktree" / "state.ts").write_text(
+                "export const state = {};", encoding="utf-8"
+            )
             (source / "auth.json").write_text("{}", encoding="utf-8")
             (source / "node_modules").mkdir()
             (source / "node_modules" / "x.js").write_text("x", encoding="utf-8")
@@ -502,9 +511,12 @@ class SyncTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(
-                sync.export_files(manifest, repo, platform="darwin", home=home), 1
+                sync.export_files(manifest, repo, platform="darwin", home=home), 2
             )
             self.assertTrue((repo / "configs/opencode/plugins/safe.ts").exists())
+            self.assertTrue(
+                (repo / "configs/opencode/plugins/worktree/state.ts").exists()
+            )
             self.assertFalse((repo / "configs/opencode/plugins/auth.json").exists())
             self.assertFalse(
                 (repo / "configs/opencode/plugins/node_modules/x.js").exists()

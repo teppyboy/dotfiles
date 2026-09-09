@@ -1114,10 +1114,6 @@ def _directory_entries(source: Path) -> list[Path]:
             relative = path.relative_to(source)
             if (
                 name.casefold() in EXCLUDED_FILE_NAMES
-                or (
-                    name.casefold() == "state.ts"
-                    and "worktree" in {part.casefold() for part in relative.parts}
-                )
                 or is_sensitive_path(relative)
             ):
                 continue
