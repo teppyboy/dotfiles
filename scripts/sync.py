@@ -758,26 +758,27 @@ def _base64_variants(
             # Source/config files contain incidental quoted Base64-looking words.
             # Keep fail-closed behavior for standalone or credential assignments;
             # ignore only non-credential embedded fragments that decode as binary.
-            if embedded:
-                key_match = re.search(
-                    r"(?:[\\\"']?([A-Za-z][A-Za-z0-9_-]*)[\\\"']?\\s*[:=])\\s*[\\\"']?$",
-                    prefix,
+            if not embedded:
+                raise
+            key_match = re.search(
+                r"(?:[\\\"']?([A-Za-z][A-Za-z0-9_-]*)[\\\"']?\\s*[:=])\\s*[\\\"']?$",
+                prefix,
+            )
+            key = _normalized_key(key_match.group(1)) if key_match else ""
+            credential_key = any(
+                term in key
+                for term in (
+                    "token",
+                    "secret",
+                    "password",
+                    "credential",
+                    "apikey",
+                    "authorization",
+                    "bearer",
                 )
-                key = _normalized_key(key_match.group(1)) if key_match else ""
-                credential_key = any(
-                    term in key
-                    for term in (
-                        "token",
-                        "secret",
-                        "password",
-                        "credential",
-                        "apikey",
-                        "authorization",
-                        "bearer",
-                    )
-                )
-                if not credential_key and "binary" in str(exc):
-                    continue
+            )
+            if not credential_key and "binary" in str(exc):
+                continue
             raise
         if candidates is None:
             continue
