@@ -227,7 +227,7 @@ CREDENTIAL_MARKERS = (
         r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|"
         r"private[_-]?key|auth(?:entication|orization)?|token|credential(?:s)?|"
         r"password|secret|cookie|history|session))\s*['\"]?\s*[:=]\s*"
-        r"(?!\s*(?:await|new|function|async|this|current|parent|client|maximum|root|no|fork)\b)"
+        r"(?!\s*(?:await|new|function|async|this|current|parent|client|maximum|root|no|fork|getsession)\b)"
         r"(?=[\"']?(?:https?://|[A-Za-z0-9_./+\-]{1,}))"
     ),
     re.compile(r"-----BEGIN [^-\n]*PRIVATE KEY-----"),
