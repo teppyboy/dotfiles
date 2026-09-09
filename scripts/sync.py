@@ -420,12 +420,9 @@ def _sanitize_value(
         if _secret_key(key):
             return secret
         if (
-            (
-                normalized_key in {_normalized_key(item) for item in ALWAYS_ENDPOINT_KEYS}
-                or (server_context and normalized_key == "url")
-            )
-            and isinstance(value, str)
-        ):
+            normalized_key in {_normalized_key(item) for item in ALWAYS_ENDPOINT_KEYS}
+            or (server_context and normalized_key == "url")
+        ) and isinstance(value, str):
             return endpoint
     if isinstance(value, str) and _looks_machine_path(value):
         return local_path
@@ -475,7 +472,8 @@ def _validate_sanitized(
             raise SyncError(f"unsanitized credential field: {key}")
         if (
             (
-                normalized_key in {_normalized_key(item) for item in ALWAYS_ENDPOINT_KEYS}
+                normalized_key
+                in {_normalized_key(item) for item in ALWAYS_ENDPOINT_KEYS}
                 or (server_context and normalized_key == "url")
             )
             and isinstance(value, str)
@@ -515,9 +513,7 @@ def sanitize_config(source: str, app: str, *, jsonc: bool = False) -> str:
     output = json.dumps(sanitized, indent=2, ensure_ascii=False) + "\n"
     # Scanner key-name rules protect raw files; sanitized fields are already
     # replaced, so mask the same normalized secret-key variants before scanning.
-    normalized_secret_keys = {
-        _normalized_key(secret_key) for secret_key in SECRET_KEYS
-    }
+    normalized_secret_keys = {_normalized_key(secret_key) for secret_key in SECRET_KEYS}
 
     def mask_secret_key(match: re.Match[str]) -> str:
         key = match.group(1)
@@ -1107,23 +1103,12 @@ def _ensure_directory_content(
         text,
     )
     content = sanitized_text.encode("utf-8")
-    # Run the complete scanner. Incidental transform-budget exhaustion can occur
-    # in ordinary source text; credential-like failures always propagate.
     try:
         ensure_safe_content(content)
     except SyncError as exc:
-        if "refusing content that resembles a credential" not in str(exc):
-            if not any(
-                reason in str(exc)
-                for reason in (
-                    "content beyond text transform depth",
-                    "undecodable or binary encoded content",
-                    "content with too many encoded candidates",
-                    "encoded content over cumulative safety budget",
-                )
-            ):
-                raise
-        else:
+        # Ordinary prose can trigger only the text-transform depth guard. Never
+        # suppress binary, undecodable, encoded-credential, or base64 failures.
+        if str(exc) != "refusing content beyond text transform depth":
             raise
     return content
 

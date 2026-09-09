@@ -410,12 +410,14 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(result["documentation"], "https://public.example/docs")
 
     def test_sanitizer_replaces_normalized_secret_key_variants(self):
-        source = json.dumps({
-            "api-key": "live",
-            "access-token": "live",
-            "client-secret": "live",
-            "private-key": "live",
-        })
+        source = json.dumps(
+            {
+                "api-key": "live",
+                "access-token": "live",
+                "client-secret": "live",
+                "private-key": "live",
+            }
+        )
         result = json.loads(sync.sanitize_config(source, "opencode"))
         for key in json.loads(source):
             self.assertEqual(result[key], "${OPENCODE_API_KEY}")
@@ -423,6 +425,36 @@ class SyncTests(unittest.TestCase):
     def test_sanitizer_rejects_unknown_credential_field(self):
         with self.assertRaises(sync.SyncError):
             sync.sanitize_config('{"mysterySecret":"value"}', "opencode")
+
+    def test_directory_content_rejects_binary_base64(self):
+        path = Path("plugins") / "binary.ts"
+        with self.assertRaises(sync.SyncError):
+            sync._ensure_directory_content(b"AAEC", path)
+
+    def test_nested_directory_binary_base64_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            source = home / ".config" / "opencode" / "plugins"
+            source.mkdir(parents=True)
+            repo.mkdir()
+            (source / "nested").mkdir()
+            (source / "nested" / "binary.ts").write_bytes(b"AAEC")
+            manifest = (
+                sync.Mapping(
+                    "opencode",
+                    "configs/opencode/plugins",
+                    "home",
+                    ".config/opencode/plugins",
+                    mode="directory",
+                ),
+            )
+            with self.assertRaises(sync.SyncError):
+                sync.export_files(manifest, repo, platform="darwin", home=home)
+            self.assertFalse(
+                (repo / "configs/opencode/plugins/nested/binary.ts").exists()
+            )
 
     def test_directory_export_skips_excluded_entries(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -511,7 +543,8 @@ class SyncTests(unittest.TestCase):
             original = r'const pattern = "\\\\n";'
             path.write_text(original, encoding="utf-8")
             self.assertEqual(
-                sync._ensure_directory_content(path.read_bytes(), path), original.encode()
+                sync._ensure_directory_content(path.read_bytes(), path),
+                original.encode(),
             )
 
     def test_sanitizer_replaces_machine_paths(self):
