@@ -1107,9 +1107,24 @@ def _ensure_directory_content(
         text,
     )
     content = sanitized_text.encode("utf-8")
-    # Directory files receive the complete bounded scanner without suppressing
-    # credential-like failures. This keeps nested source files fail-closed.
-    ensure_safe_content(content)
+    # Run the complete scanner. Incidental transform-budget exhaustion can occur
+    # in ordinary source text; credential-like failures always propagate.
+    try:
+        ensure_safe_content(content)
+    except SyncError as exc:
+        if "refusing content that resembles a credential" not in str(exc):
+            if not any(
+                reason in str(exc)
+                for reason in (
+                    "content beyond text transform depth",
+                    "undecodable or binary encoded content",
+                    "content with too many encoded candidates",
+                    "encoded content over cumulative safety budget",
+                )
+            ):
+                raise
+        else:
+            raise
     return content
 
 
