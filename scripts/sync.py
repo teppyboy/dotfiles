@@ -95,12 +95,17 @@ MAX_BASE64_CANDIDATES = 256
 MAX_BASE64_BYTES = 1024 * 1024
 MAX_BASE64_TOTAL_BYTES = 2 * 1024 * 1024
 MAX_BASE64_CHARS = (MAX_BASE64_BYTES * 4 // 3) + 4
+MAX_TEXT_TRANSFORM_DEPTH = 4
+MAX_TEXT_TRANSFORM_VARIANTS = 128
+MAX_TEXT_TRANSFORM_BYTES = 2 * 1024 * 1024
 _BASE64_CONTIGUOUS_RE = re.compile(
-    r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{8,}={0,2})(?![A-Za-z0-9+/_=-])"
+    r"(?<![A-Za-z0-9+/_-])((?:[A-Za-z0-9+/_-]{8,}|"
+    r"[A-Za-z0-9+/_-]{2,})={1,2})(?![A-Za-z0-9+/_=-])|"
+    r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{8,})(?![A-Za-z0-9+/_-])"
 )
 _BASE64_WRAPPED_RE = re.compile(
     r"(?<![A-Za-z0-9+/_-])((?:[A-Za-z0-9+/_-]{4}[ \t\r\n]+)+"
-    r"[A-Za-z0-9+/_-]{2,4}={0,2})(?![A-Za-z0-9+/_=-])"
+    r"[A-Za-z0-9+/_-]{2,4}={0,2})(?![A-Za-z0-9+/_-])"
 )
 CREDENTIAL_MARKERS = (
     re.compile(
@@ -165,6 +170,23 @@ def _is_text(text: str) -> bool:
     )
 
 
+def _looks_like_utf16(content: bytes) -> bool:
+    if len(content) < 8:
+        return False
+    odd_nuls = sum(value == 0 for value in content[1::2])
+    even_nuls = sum(value == 0 for value in content[::2])
+    return max(odd_nuls, even_nuls) >= len(content) // 4
+
+
+def _looks_like_utf32(content: bytes) -> bool:
+    if len(content) < 12:
+        return False
+    return any(
+        sum(value == 0 for value in content[offset::4]) >= len(content) // 8
+        for offset in range(4)
+    )
+
+
 def _decoded_candidates(content: bytes) -> tuple[str, ...]:
     """Decode UTF text, rejecting undecodable or binary content."""
     if len(content) > MAX_CONTENT_BYTES:
@@ -178,8 +200,10 @@ def _decoded_candidates(content: bytes) -> tuple[str, ...]:
         encodings.append("utf-8-sig")
     else:
         encodings.append("utf-8")
-        if b"\x00" in content:
-            encodings.extend(("utf-16", "utf-32"))
+        if _looks_like_utf16(content):
+            encodings.append("utf-16")
+        if _looks_like_utf32(content):
+            encodings.append("utf-32")
 
     candidates: list[str] = []
     for encoding in encodings:
@@ -197,22 +221,30 @@ def _decoded_candidates(content: bytes) -> tuple[str, ...]:
 
 
 def _text_variants(text: str) -> tuple[str, ...]:
-    """Add bounded percent- and escape-decoded forms for marker scanning."""
-    variants = [text]
-    current = text
-    for _ in range(2):
-        decoded = unquote(current)
-        if decoded == current:
-            break
-        variants.append(decoded)
-        current = decoded
-    try:
-        escaped = codecs.decode(text, "unicode_escape")
-    except UnicodeDecodeError:
-        escaped = text
-    if escaped != text and _is_text(escaped):
-        variants.append(escaped)
-    return tuple(dict.fromkeys(variants))
+    """Apply bounded percent/unicode transforms to their transitive closure."""
+    worklist = [(text, 0)]
+    seen = {text}
+    total_bytes = len(text.encode("utf-8"))
+    variants: list[str] = []
+    while worklist:
+        current, depth = worklist.pop(0)
+        variants.append(current)
+        if depth >= MAX_TEXT_TRANSFORM_DEPTH:
+            continue
+        generated: list[str] = [unquote(current)]
+        with contextlib.suppress(UnicodeError):
+            generated.append(codecs.decode(current, "unicode_escape"))
+        for candidate in generated:
+            if candidate == current or candidate in seen or not _is_text(candidate):
+                continue
+            seen.add(candidate)
+            total_bytes += len(candidate.encode("utf-8"))
+            if len(seen) > MAX_TEXT_TRANSFORM_VARIANTS:
+                raise SyncError("refusing content with too many transformed variants")
+            if total_bytes > MAX_TEXT_TRANSFORM_BYTES:
+                raise SyncError("refusing transformed content over safety budget")
+            worklist.append((candidate, depth + 1))
+    return tuple(variants)
 
 
 @dataclass
@@ -265,7 +297,7 @@ def _base64_variants(
         budget.candidates += 1
         if budget.candidates > MAX_BASE64_CANDIDATES:
             raise SyncError("refusing content with too many encoded candidates")
-        encoded = re.sub(r"\s+", "", match.group(1))
+        encoded = re.sub(r"\s+", "", match.group(1) or match.group(2))
         if len(encoded) > MAX_BASE64_CHARS:
             raise SyncError("refusing oversized encoded candidate")
         encoded += "=" * (-len(encoded) % 4)
@@ -280,8 +312,8 @@ def _base64_variants(
             raise SyncError("refusing encoded content over cumulative safety budget")
         try:
             candidates = _decoded_candidates(decoded)
-        except SyncError:
-            continue
+        except SyncError as exc:
+            raise SyncError("refusing undecodable or binary encoded content") from exc
         for candidate in candidates:
             for transformed in _text_variants(candidate):
                 variants.append(transformed)
@@ -610,12 +642,6 @@ def check_files(
     home, appdata = _defaults(platform, home, appdata)
     failures = 0
     for item in entries:
-        source_base = home if item.platform_root == "home" else appdata
-        source_path = (
-            (source_base / item.relative_path)
-            if source_base
-            else Path(item.relative_path)
-        )
         try:
             source = resolve_destination(
                 platform,
@@ -625,18 +651,15 @@ def check_files(
                 appdata=appdata,
             )
         except SyncError as exc:
-            if source_path.is_symlink():
-                print(f"unsafe source {source_path}: {exc}")
-                failures += 1
-                source = None
-            else:
-                raise
+            print(f"unsafe source {item.relative_path}: {exc}")
+            failures += 1
+            source = None
         try:
             repo_file = _safe_join(repo_root, item.repo_path, label="repository")
         except SyncError as exc:
-            repo_file = repo_root / item.repo_path
-            print(f"unsafe repo {repo_file}: {exc}")
+            print(f"unsafe repo {item.repo_path}: {exc}")
             failures += 1
+            repo_file = None
         for label, path in (("source", source), ("repo", repo_file)):
             if path is None:
                 continue

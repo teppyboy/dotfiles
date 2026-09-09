@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 MODULE_PATH = Path(__file__).parents[1] / "scripts" / "sync.py"
 spec = importlib.util.spec_from_file_location("sync", MODULE_PATH)
@@ -199,10 +200,31 @@ class SyncTests(unittest.TestCase):
             with self.subTest(content=content), self.assertRaises(sync.SyncError):
                 sync.ensure_safe_content(content)
 
+    def test_base64_decoded_binary_content_fails_closed(self):
+        payload = base64.b64encode(bytes((0, 1, 2, 3)))
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(payload)
+
     def test_base64_decodes_percent_encoded_credentials(self):
         payload = b"value=OPENAI%5FAPI%5FKEY%3Dabc"
         with self.assertRaises(sync.SyncError):
             sync.ensure_safe_content(base64.b64encode(payload))
+
+    def test_text_transform_closure_rejects_triple_percent_credentials(self):
+        payload = b"value=OPENAI%2525255FAPI%2525255FKEY%2525253Dabc"
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(payload)
+
+    def test_text_transform_closure_rejects_mixed_unicode_percent_credentials(self):
+        payload = b"value=OPENAI%255Cx5fAPI%255Cx5fKEY%253Dabc"
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(payload)
+
+    def test_base64_wrapped_mixed_transform_credentials_are_rejected(self):
+        payload = base64.b64encode(b"value=OPENAI%255Cx5fAPI%255Cx5fKEY%253Dabc").decode()
+        wrapped = "\\n".join(payload[index : index + 4] for index in range(0, len(payload), 4))
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(f"value={wrapped}".encode())
 
     def test_base64_decodes_unicode_escaped_credentials(self):
         payload = b"value=OPENAI\\x5fAPI\\x5fKEY=abc"
@@ -348,6 +370,20 @@ class SyncTests(unittest.TestCase):
             with self.assertRaises(sync.SyncError):
                 sync.copy_file(source, destination, dry_run=False, force=True)
 
+    def test_copy_rejects_hardlink_source(self):
+        if not hasattr(os, "link"):
+            self.skipTest("hardlinks unavailable")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source.txt"
+            linked = root / "linked.txt"
+            destination = root / "destination.txt"
+            source.write_text("safe", encoding="utf-8")
+            os.link(source, linked)
+            with self.assertRaises(sync.SyncError):
+                sync.copy_file(linked, destination, dry_run=False, force=True)
+            self.assertFalse(destination.exists())
+
     def test_copy_rejects_hardlink_destination(self):
         if not hasattr(os, "link"):
             self.skipTest("hardlinks unavailable")
@@ -424,6 +460,19 @@ class SyncTests(unittest.TestCase):
             sync.copy_file(source, destination, dry_run=False, force=True)
 
             self.assertEqual(destination.read_text(encoding="utf-8"), "new")
+            self.assertEqual(list(root.glob(".destination.txt.*")), [])
+
+    def test_failed_publication_removes_temporary_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source.txt"
+            destination = root / "destination.txt"
+            source.write_text("safe", encoding="utf-8")
+            with (
+                mock.patch.object(sync.os, "replace", side_effect=OSError("publish failed")),
+                self.assertRaises(OSError),
+            ):
+                sync.copy_file(source, destination, dry_run=False, force=True)
             self.assertEqual(list(root.glob(".destination.txt.*")), [])
 
     def test_cli_rejects_invalid_command(self):
