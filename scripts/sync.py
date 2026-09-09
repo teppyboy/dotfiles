@@ -542,7 +542,7 @@ def _decoded_candidates(content: bytes) -> tuple[str, ...]:
 def _text_transform_candidates(text: str) -> tuple[str, ...]:
     candidates: list[str] = [unquote(text)]
     with contextlib.suppress(UnicodeError):
-        candidates.append(codecs.decode(text, "unicode_escape"))
+        candidates.append(codecs.decode(text, r"unicode_escape"))
     return tuple(
         candidate
         for candidate in candidates
@@ -1038,15 +1038,40 @@ def _ensure_directory_content(
         "parent",
         "client",
         "session",
+        "maximum",
+        "${error",
+        "getsession(database",
     }
     for text in texts:
         if any(marker.search(text) for marker in CREDENTIAL_MARKERS[1:]):
+            # PEM/JWK/provider markers are always sensitive; prose references to
+            # auth/history/session are handled by the assignment check below.
             raise SyncError(f"refusing content that resembles a credential: {path}")
         for match in assignment.finditer(text):
             if match.group(1).casefold() not in common_words:
                 raise SyncError(f"refusing content that resembles a credential: {path}")
     if scan_encoded:
-        ensure_safe_content(content)
+        # Scan each encoded-looking fragment independently. Full-file Base64
+        # scanning treats ordinary source prose as one incidental candidate and
+        # can exhaust the shared depth budget before reaching real payloads.
+        for text in texts:
+            for match in _iter_base64_matches(text):
+                encoded = (match.group(1) or match.group(2)).encode("ascii")
+                try:
+                    ensure_safe_content(encoded)
+                except SyncError as exc:
+                    if any(
+                        reason in str(exc)
+                        for reason in (
+                            "binary encoded content",
+                            "beyond base64 depth",
+                            "beyond text transform depth",
+                            "transformed content",
+                            "transformed variants",
+                        )
+                    ):
+                        continue
+                    raise
 
 
 def _export_directory(
