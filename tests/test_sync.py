@@ -456,6 +456,26 @@ class SyncTests(unittest.TestCase):
                 (repo / "configs/opencode/plugins/nested/binary.ts").exists()
             )
 
+    def test_directory_content_rejects_deep_percent_transform(self):
+        encoded = "token=abc"
+        for _ in range(sync.MAX_TEXT_TRANSFORM_DEPTH + 1):
+            encoded = encoded.replace("%", "%25").replace("=", "%3D")
+        with self.assertRaises(sync.SyncError):
+            sync._ensure_directory_content(encoded.encode(), Path("plugins/deep.ts"))
+
+    def test_directory_entries_propagates_walk_errors(self):
+        def failing_walk(*args, **kwargs):
+            kwargs["onerror"](OSError("walk failed"))
+            yield from ()
+
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "plugins"
+            source.mkdir()
+            with mock.patch.object(
+                sync.os, "walk", side_effect=failing_walk
+            ), self.assertRaises(sync.SyncError):
+                sync._directory_entries(source)
+
     def test_directory_export_skips_excluded_entries(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

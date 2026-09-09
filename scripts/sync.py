@@ -1050,6 +1050,7 @@ def _directory_entries(source: Path) -> list[Path]:
         raise SyncError(f"expected directory: {source}")
     entries: list[Path] = []
     total_bytes = 0
+
     def raise_walk_error(error: OSError) -> None:
         raise SyncError(f"cannot walk directory: {source}") from error
 
