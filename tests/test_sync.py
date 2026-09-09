@@ -395,11 +395,27 @@ class SyncTests(unittest.TestCase):
         with self.assertRaises(sync.SyncError):
             sync.sanitize_config(source, "opencode", jsonc=True)
 
-    def test_jsonc_sanitization_preserves_urls_in_strings(self):
-        source = '{\n // comment\n "url": "https://private.example/v1",\n "label": "https://public.example/docs",\n}'
+    def test_jsonc_sanitization_preserves_unrelated_urls(self):
+        source = '{\n // comment\n "mcp": {"url": "https://private.example/v1"},\n "label": "https://public.example/docs",\n}'
         result = json.loads(sync.sanitize_config(source, "opencode", jsonc=True))
-        self.assertEqual(result["url"], "${OPENCODE_API_BASE_URL}")
+        self.assertEqual(result["mcp"]["url"], "${OPENCODE_API_BASE_URL}")
         self.assertEqual(result["label"], "https://public.example/docs")
+
+    def test_sanitizer_preserves_unrelated_documentation_url(self):
+        source = '{"documentation":"https://public.example/docs"}'
+        result = json.loads(sync.sanitize_config(source, "opencode"))
+        self.assertEqual(result["documentation"], "https://public.example/docs")
+
+    def test_sanitizer_replaces_normalized_secret_key_variants(self):
+        source = json.dumps({
+            "api-key": "live",
+            "access-token": "live",
+            "client-secret": "live",
+            "private-key": "live",
+        })
+        result = json.loads(sync.sanitize_config(source, "opencode"))
+        for key in json.loads(source):
+            self.assertEqual(result[key], "${OPENCODE_API_KEY}")
 
     def test_sanitizer_rejects_unknown_credential_field(self):
         with self.assertRaises(sync.SyncError):
@@ -417,6 +433,8 @@ class SyncTests(unittest.TestCase):
             (source / "auth.json").write_text("{}", encoding="utf-8")
             (source / "node_modules").mkdir()
             (source / "node_modules" / "x.js").write_text("x", encoding="utf-8")
+            for lock_name in ("bun.lock", "BUN.LOCKB"):
+                (source / lock_name).write_text("lock", encoding="utf-8")
             sibling = source.parent / "sibling.ts"
             sibling.write_text("sibling", encoding="utf-8")
             manifest = (
@@ -436,6 +454,8 @@ class SyncTests(unittest.TestCase):
             self.assertFalse(
                 (repo / "configs/opencode/plugins/node_modules/x.js").exists()
             )
+            self.assertFalse((repo / "configs/opencode/plugins/bun.lock").exists())
+            self.assertFalse((repo / "configs/opencode/plugins/BUN.LOCKB").exists())
             self.assertFalse((repo / "configs/opencode/sibling.ts").exists())
 
     def test_machine_paths_are_rejected_in_raw_and_directory_files(self):
@@ -463,6 +483,10 @@ class SyncTests(unittest.TestCase):
             (source / "nested" / "provider.ts").write_text(
                 'const OPENAI_API_KEY = "live";', encoding="utf-8"
             )
+            (source / "nested" / "query.ts").write_text(
+                'const endpoint = "https://example.test/mcp?token=live";',
+                encoding="utf-8",
+            )
             manifest = (
                 sync.Mapping(
                     "opencode",
@@ -476,6 +500,15 @@ class SyncTests(unittest.TestCase):
                 sync.export_files(manifest, repo, platform="darwin", home=home)
             self.assertFalse(
                 (repo / "configs/opencode/plugins/nested/unsafe.ts").exists()
+            )
+
+    def test_directory_preserves_escaped_backslashes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "source.ts"
+            original = r'const pattern = "\\\\n";'
+            path.write_text(original, encoding="utf-8")
+            self.assertEqual(
+                sync._ensure_directory_content(path.read_bytes(), path), original.encode()
             )
 
     def test_sanitizer_replaces_machine_paths(self):

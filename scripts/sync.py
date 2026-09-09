@@ -127,8 +127,6 @@ EXCLUDED_DIRECTORY_NAMES = {
         "tasks",
         "state",
         "states",
-        "worktree",
-        "worktrees",
         "runtime",
         "generated",
         "model-store",
@@ -151,6 +149,8 @@ EXCLUDED_FILE_NAMES = {
         "history.jsonl",
         "state.json",
         "runtime.json",
+        "bun.lock",
+        "bun.lockb",
     }
 }
 MAX_DIRECTORY_FILES = 10_000
@@ -277,8 +277,11 @@ SECRET_KEYS = {
     "secret",
     "token",
     "credential",
+    "private_key",
+    "private-key",
 }
 ENDPOINT_KEYS = {"baseurl", "base_url", "endpoint", "hostname", "host", "url"}
+ALWAYS_ENDPOINT_KEYS = {"baseurl", "base_url", "endpoint", "hostname", "host"}
 
 
 def _strip_jsonc_comments(source: str) -> str:
@@ -393,46 +396,108 @@ def _looks_machine_path(value: str) -> bool:
     )
 
 
-def _sanitize_value(key: str | None, value: object, app: str) -> object:
+def _sanitize_value(
+    key: str | None,
+    value: object,
+    app: str,
+    *,
+    server_context: bool = False,
+) -> object:
     endpoint = "${PI_API_BASE_URL}" if app == "pi" else "${OPENCODE_API_BASE_URL}"
     secret = "${PI_PROVIDER_API_KEY}" if app == "pi" else "${OPENCODE_API_KEY}"
     local_path = "${PI_LOCAL_PATH}" if app == "pi" else "${OPENCODE_LOCAL_PATH}"
+    normalized_key = _normalized_key(key) if key is not None else ""
+    child_server_context = server_context or normalized_key in {
+        "mcp",
+        "mcpservers",
+        "provider",
+        "providers",
+        "server",
+        "servers",
+        "options",
+    }
     if key is not None:
         if _secret_key(key):
             return secret
-        if _normalized_key(key) in {
-            _normalized_key(item) for item in ENDPOINT_KEYS
-        } and isinstance(value, str):
+        if (
+            (
+                normalized_key in {_normalized_key(item) for item in ALWAYS_ENDPOINT_KEYS}
+                or (server_context and normalized_key == "url")
+            )
+            and isinstance(value, str)
+        ):
             return endpoint
     if isinstance(value, str) and _looks_machine_path(value):
         return local_path
     if isinstance(value, dict):
         return {
-            child_key: _sanitize_value(child_key, child_value, app)
+            child_key: _sanitize_value(
+                child_key,
+                child_value,
+                app,
+                server_context=child_server_context,
+            )
             for child_key, child_value in value.items()
         }
     if isinstance(value, list):
-        return [_sanitize_value(key, child_value, app) for child_value in value]
+        return [
+            _sanitize_value(
+                key,
+                child_value,
+                app,
+                server_context=server_context,
+            )
+            for child_value in value
+        ]
     return value
 
 
-def _validate_sanitized(value: object, app: str, key: str | None = None) -> None:
+def _validate_sanitized(
+    value: object,
+    app: str,
+    key: str | None = None,
+    *,
+    server_context: bool = False,
+) -> None:
     secret = "${PI_PROVIDER_API_KEY}" if app == "pi" else "${OPENCODE_API_KEY}"
+    normalized_key = _normalized_key(key) if key is not None else ""
+    child_server_context = server_context or normalized_key in {
+        "mcp",
+        "mcpservers",
+        "provider",
+        "providers",
+        "server",
+        "servers",
+        "options",
+    }
     if key is not None:
         if _secret_key(key) and value != secret:
             raise SyncError(f"unsanitized credential field: {key}")
         if (
-            _normalized_key(key) in {_normalized_key(item) for item in ENDPOINT_KEYS}
+            (
+                normalized_key in {_normalized_key(item) for item in ALWAYS_ENDPOINT_KEYS}
+                or (server_context and normalized_key == "url")
+            )
             and isinstance(value, str)
             and value.startswith(("http://", "https://"))
         ):
             raise SyncError(f"unsanitized endpoint field: {key}")
     if isinstance(value, dict):
         for child_key, child_value in value.items():
-            _validate_sanitized(child_value, app, child_key)
+            _validate_sanitized(
+                child_value,
+                app,
+                child_key,
+                server_context=child_server_context,
+            )
     elif isinstance(value, list):
         for child_value in value:
-            _validate_sanitized(child_value, app, key)
+            _validate_sanitized(
+                child_value,
+                app,
+                key,
+                server_context=server_context,
+            )
 
 
 def sanitize_config(source: str, app: str, *, jsonc: bool = False) -> str:
@@ -445,18 +510,22 @@ def sanitize_config(source: str, app: str, *, jsonc: bool = False) -> str:
             data = json.loads(_strip_jsonc_comments(source))
         except (json.JSONDecodeError, TypeError, SyncError) as fallback_exc:
             raise SyncError("invalid JSON configuration") from fallback_exc
-    sanitized = _sanitize_value(None, data, app)
+    sanitized = _sanitize_value(None, data, app, server_context=False)
     _validate_sanitized(sanitized, app)
     output = json.dumps(sanitized, indent=2, ensure_ascii=False) + "\n"
     # Scanner key-name rules protect raw files; sanitized fields are already
-    # replaced, so mask their labels and placeholders before scanning values.
-    scan_output = re.sub(
-        r'("(?:apiKey|api_key|token|accessToken|refreshToken|clientSecret|'
-        r'password|secret|authorization|bearerToken)"\s*:)',
-        '"publicField":',
-        output,
-        flags=re.IGNORECASE,
-    )
+    # replaced, so mask the same normalized secret-key variants before scanning.
+    normalized_secret_keys = {
+        _normalized_key(secret_key) for secret_key in SECRET_KEYS
+    }
+
+    def mask_secret_key(match: re.Match[str]) -> str:
+        key = match.group(1)
+        if _normalized_key(key) in normalized_secret_keys:
+            return '"publicField":'
+        return match.group(0)
+
+    scan_output = re.sub(r'"([^"\\]+)"\s*:', mask_secret_key, output)
     scan_output = re.sub(r"\$\{[A-Z0-9_]+\}", "placeholder", scan_output)
     ensure_safe_content(scan_output.encode("utf-8"))
     return output
@@ -1029,97 +1098,18 @@ def _ensure_directory_content(
         text = content.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise SyncError(f"directory file is not UTF-8: {path}") from exc
-    text = text.replace("\\\\", "\\")
     sanitized_text = re.sub(
         r"(?i)\b[a-z]:[\\\\/]+[^\s\"'`),;]*|"
         r"(?<![A-Za-z0-9:])/(?:Users|home|tmp|private|var|workspace)(?:/[^\s\"'`),;]*)?|"
-        r"(?<![A-Za-z0-9])~[\\/][^\s\"'`),;]*",
+        r"(?<![A-Za-z0-9])~[\\/][^\s\"'`),;]*|"
+        r"(?<![A-Za-z0-9])\\\\[^\\/\s]+[\\/][^\\/\s]+",
         "${OPENCODE_LOCAL_PATH}",
         text,
     )
     content = sanitized_text.encode("utf-8")
-    content = re.sub(
-        rb"\\\\{2,}[^\\/\s]+[\\/][^\\/\s]+",
-        b"${OPENCODE_LOCAL_PATH}",
-        content,
-    )
-    # Directory source code/docs may mention credential words in prose. Require
-    # an assignment-like value before rejecting a text file.
-    texts = _decoded_candidates(content)
-    assignment = re.compile(
-        r"(?im)(?:^|[,{;\s])['\"]?(?:api[_-]?key|access[_-]?token|"
-        r"refresh[_-]?token|client[_-]?secret|private[_-]?key|auth|token|"
-        r"credentials?|password|secret|cookie|history|session)['\"]?\s*[:=]\s*"
-        r"['\"]?([^\s,};'\"]+)"
-    )
-    common_words = {
-        "no",
-        "not",
-        "none",
-        "true",
-        "false",
-        "null",
-        "undefined",
-        "await",
-        "this",
-        "this.client.session",
-        "current",
-        "parent",
-        "client",
-        "session",
-        "maximum",
-        "${error",
-        "getsession(database",
-        "getsession",
-        "sessioninput",
-        "sessioninput):",
-        "getsessions",
-    }
-    try:
-        # Run the complete bounded scanner first. Directory source code often
-        # uses words such as `session` as ordinary identifiers; the assignment
-        # and marker checks below decide whether a scanner hit is a real leak.
-        ensure_safe_content(content)
-    except SyncError as exc:
-        if not any(
-            reason in str(exc)
-            for reason in (
-                "content beyond text transform depth",
-                "undecodable or binary encoded content",
-                "content with too many encoded candidates",
-                "encoded content over cumulative safety budget",
-                "content that resembles a credential",
-            )
-        ):
-            raise
-    for text in texts:
-        if any(marker.search(text) for marker in CREDENTIAL_MARKERS[1:]):
-            # PEM/JWK/provider markers are always sensitive; prose references to
-            # auth/history/session are handled by the assignment check below.
-            raise SyncError(f"refusing content that resembles a credential: {path}")
-        for match in assignment.finditer(text):
-            if match.group(1).casefold() not in common_words:
-                raise SyncError(f"refusing content that resembles a credential: {path}")
-    if scan_encoded:
-        # Scan each encoded-looking fragment independently. Full-file Base64
-        # scanning treats ordinary source prose as one incidental candidate and
-        # can exhaust the shared depth budget before reaching real payloads.
-        for text in texts:
-            for match in _iter_base64_matches(text):
-                encoded = (match.group(1) or match.group(2)).encode("ascii")
-                try:
-                    ensure_safe_content(encoded)
-                except SyncError as exc:
-                    if not any(
-                        reason in str(exc)
-                        for reason in (
-                            "content beyond text transform depth",
-                            "undecodable or binary encoded content",
-                            "content with too many encoded candidates",
-                            "encoded content over cumulative safety budget",
-                        )
-                    ):
-                        raise
+    # Directory files receive the complete bounded scanner without suppressing
+    # credential-like failures. This keeps nested source files fail-closed.
+    ensure_safe_content(content)
     return content
 
 
