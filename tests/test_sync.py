@@ -178,6 +178,9 @@ class SyncTests(unittest.TestCase):
             with self.subTest(content=content), self.assertRaises(sync.SyncError):
                 sync.ensure_safe_content(content)
 
+    def test_content_scanner_ignores_provider_prefix_substrings_in_package_names(self):
+        sync.ensure_safe_content(b'"npm:@juicesharp/rpiv-ask-user-question"')
+
     def test_content_scanner_rejects_utf16_and_utf32_credentials(self):
         for encoding in ("utf-16", "utf-32"):
             with self.subTest(encoding=encoding), self.assertRaises(sync.SyncError):
