@@ -1,0 +1,14 @@
+{
+  "providers": {
+    "9router-alice": {
+      "baseUrl": "${PI_API_BASE_URL}",
+      "api": "openai-completions",
+      "apiKey": "${PI_PROVIDER_API_KEY}"
+    },
+    "ttm-digital": {
+      "baseUrl": "${PI_API_BASE_URL}",
+      "api": "openai-completions",
+      "apiKey": "${PI_PROVIDER_API_KEY}"
+    }
+  }
+}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -369,6 +370,65 @@ class SyncTests(unittest.TestCase):
 
     def test_content_scanner_accepts_non_sensitive_settings(self):
         sync.ensure_safe_content(b"theme = 'dark'\\nmodel = 'default'\\n")
+
+    def test_mapping_modes_and_sanitized_config(self):
+        self.assertTrue({"file", "sanitized_json", "sanitized_jsonc", "directory"}.issuperset({item.mode for item in sync.MANIFEST}))
+        self.assertIn("sanitized_jsonc", {item.mode for item in sync.MANIFEST})
+        source = '{"baseURL":"https://private.example/v1","apiKey":"live-value","nested":{"token":"x"}}'
+        result = json.loads(sync.sanitize_config(source, "opencode"))
+        self.assertEqual(result["baseURL"], "${OPENCODE_API_BASE_URL}")
+        self.assertEqual(result["apiKey"], "${OPENCODE_API_KEY}")
+        self.assertEqual(result["nested"]["token"], "${OPENCODE_API_KEY}")
+        self.assertNotIn("private.example", sync.sanitize_config(source, "opencode"))
+        self.assertNotIn("live-value", sync.sanitize_config(source, "opencode"))
+
+    def test_jsonc_sanitization_preserves_urls_in_strings(self):
+        source = '{\n // comment\n "url": "https://private.example/v1",\n "label": "https://public.example/docs",\n}'
+        result = json.loads(sync.sanitize_config(source, "opencode", jsonc=True))
+        self.assertEqual(result["url"], "${OPENCODE_API_BASE_URL}")
+        self.assertEqual(result["label"], "https://public.example/docs")
+
+    def test_sanitizer_rejects_unknown_credential_field(self):
+        with self.assertRaises(sync.SyncError):
+            sync.sanitize_config('{"mysterySecret":"value"}', "opencode")
+
+    def test_directory_export_skips_excluded_entries(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            source = home / ".config" / "opencode" / "plugins"
+            source.mkdir(parents=True)
+            repo.mkdir()
+            (source / "safe.ts").write_text("export default {};", encoding="utf-8")
+            (source / "auth.json").write_text("{}", encoding="utf-8")
+            (source / "node_modules").mkdir()
+            (source / "node_modules" / "x.js").write_text("x", encoding="utf-8")
+            sibling = source.parent / "sibling.ts"
+            sibling.write_text("sibling", encoding="utf-8")
+            manifest = (sync.Mapping("opencode", "configs/opencode/plugins", "home", ".config/opencode/plugins", mode="directory"),)
+            self.assertEqual(sync.export_files(manifest, repo, platform="darwin", home=home), 1)
+            self.assertTrue((repo / "configs/opencode/plugins/safe.ts").exists())
+            self.assertFalse((repo / "configs/opencode/plugins/auth.json").exists())
+            self.assertFalse((repo / "configs/opencode/plugins/node_modules/x.js").exists())
+            self.assertFalse((repo / "configs/opencode/sibling.ts").exists())
+
+    def test_sanitized_export_leaves_source_unchanged(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            source = home / ".pi" / "agent" / "models.json"
+            source.parent.mkdir(parents=True)
+            repo.mkdir()
+            original = '{"provider":{"baseUrl":"https://private.example","apiKey":"live"}}'
+            source.write_text(original, encoding="utf-8")
+            manifest = (sync.Mapping("pi", "configs/pi/models.json", "home", ".pi/agent/models.json", mode="sanitized_json"),)
+            self.assertEqual(sync.export_files(manifest, repo, platform="darwin", home=home), 1)
+            exported = (repo / "configs/pi/models.json").read_text(encoding="utf-8")
+            self.assertIn("${PI_API_BASE_URL}", exported)
+            self.assertIn("${PI_PROVIDER_API_KEY}", exported)
+            self.assertEqual(source.read_text(encoding="utf-8"), original)
 
     def test_unlisted_file_is_not_exported(self):
         with tempfile.TemporaryDirectory() as temp:
