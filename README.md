@@ -22,4 +22,4 @@ This is a public repository. The manifest is allowlist-only: unknown files are n
 
 Review every exported diff before committing. Never add credentials, auth state, API keys, tokens, cookies, private keys, history, logs, caches, databases, or machine-specific paths.
 
-The tool rejects symlinks and hardlinks, uses bounded reads, and publishes copies atomically. Path-based checks cannot eliminate every concurrent path-swap race; Windows reparse-point behavior also depends on filesystem and OS details.
+The tool rejects symlinks and hardlinks, uses bounded reads, and publishes copies atomically. Lowercase short Base64-like words remain unclassified to avoid treating ordinary words as encoded data. Credential screening is defense in depth; review exported diffs manually. Path-based checks cannot eliminate every concurrent path-swap race; Windows reparse-point behavior also depends on filesystem and OS details.

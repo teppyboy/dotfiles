@@ -98,6 +98,8 @@ MAX_BASE64_CHARS = (MAX_BASE64_BYTES * 4 // 3) + 4
 MAX_TEXT_TRANSFORM_DEPTH = 4
 MAX_TEXT_TRANSFORM_VARIANTS = 128
 MAX_TEXT_TRANSFORM_BYTES = 2 * 1024 * 1024
+# Lowercase short Base64-like words are intentionally excluded: recognizing
+# them safely would classify ordinary words such as "test" as encoded data.
 _BASE64_CONTIGUOUS_RE = re.compile(
     r"(?<![A-Za-z0-9+/_-])((?=[A-Z0-9+/_-])[A-Za-z0-9+/_-]{2,}"
     r"={0,2})(?![A-Za-z0-9+/_=-])|"
@@ -229,6 +231,17 @@ def _decoded_candidates(content: bytes) -> tuple[str, ...]:
     return tuple(candidates)
 
 
+def _text_transform_candidates(text: str) -> tuple[str, ...]:
+    candidates: list[str] = [unquote(text)]
+    with contextlib.suppress(UnicodeError):
+        candidates.append(codecs.decode(text, "unicode_escape"))
+    return tuple(
+        candidate
+        for candidate in candidates
+        if candidate != text and _is_text(candidate)
+    )
+
+
 def _text_variants(text: str) -> tuple[str, ...]:
     """Apply bounded percent/unicode transforms to their transitive closure."""
     worklist = [(text, 0)]
@@ -240,13 +253,20 @@ def _text_variants(text: str) -> tuple[str, ...]:
     while worklist:
         current, depth = worklist.pop(0)
         variants.append(current)
+        generated = _text_transform_candidates(current)
         if depth >= MAX_TEXT_TRANSFORM_DEPTH:
+            for candidate in generated:
+                if candidate in seen:
+                    continue
+                candidate_bytes = _utf8_size(candidate)
+                if len(seen) + 1 > MAX_TEXT_TRANSFORM_VARIANTS:
+                    raise SyncError("refusing content with too many transformed variants")
+                if total_bytes + candidate_bytes > MAX_TEXT_TRANSFORM_BYTES:
+                    raise SyncError("refusing transformed content over safety budget")
+                raise SyncError("refusing content beyond text transform depth")
             continue
-        generated: list[str] = [unquote(current)]
-        with contextlib.suppress(UnicodeError):
-            generated.append(codecs.decode(current, "unicode_escape"))
         for candidate in generated:
-            if candidate == current or candidate in seen or not _is_text(candidate):
+            if candidate in seen:
                 continue
             seen.add(candidate)
             total_bytes += _utf8_size(candidate)
@@ -291,6 +311,29 @@ def _iter_base64_matches(text: str):
             current[index] = None
 
 
+def _decode_base64_match(match, budget: _Base64Budget) -> tuple[str, ...] | None:
+    budget.candidates += 1
+    if budget.candidates > MAX_BASE64_CANDIDATES:
+        raise SyncError("refusing content with too many encoded candidates")
+    encoded = re.sub(r"\s+", "", match.group(1) or match.group(2))
+    if len(encoded) > MAX_BASE64_CHARS:
+        raise SyncError("refusing oversized encoded candidate")
+    encoded += "=" * (-len(encoded) % 4)
+    try:
+        decoded = base64.b64decode(encoded, altchars=b"-_", validate=True)
+    except (ValueError, binascii.Error):
+        return None
+    if len(decoded) > MAX_BASE64_BYTES:
+        raise SyncError("refusing oversized encoded candidate")
+    budget.decoded_bytes += len(decoded)
+    if budget.decoded_bytes > MAX_BASE64_TOTAL_BYTES:
+        raise SyncError("refusing encoded content over cumulative safety budget")
+    try:
+        return _decoded_candidates(decoded)
+    except SyncError as exc:
+        raise SyncError("refusing undecodable or binary encoded content") from exc
+
+
 def _base64_variants(
     text: str,
     *,
@@ -299,32 +342,15 @@ def _base64_variants(
     match_iterator=None,
 ) -> tuple[str, ...]:
     """Recursively decode bounded base64 fragments with shared budgets."""
-    if depth >= MAX_BASE64_DEPTH:
-        return ()
     budget = budget or _Base64Budget()
-    variants: list[str] = []
     iterator = match_iterator or _iter_base64_matches
+    variants: list[str] = []
     for match in iterator(text):
-        budget.candidates += 1
-        if budget.candidates > MAX_BASE64_CANDIDATES:
-            raise SyncError("refusing content with too many encoded candidates")
-        encoded = re.sub(r"\s+", "", match.group(1) or match.group(2))
-        if len(encoded) > MAX_BASE64_CHARS:
-            raise SyncError("refusing oversized encoded candidate")
-        encoded += "=" * (-len(encoded) % 4)
-        try:
-            decoded = base64.b64decode(encoded, altchars=b"-_", validate=True)
-        except (ValueError, binascii.Error):
+        candidates = _decode_base64_match(match, budget)
+        if candidates is None:
             continue
-        if len(decoded) > MAX_BASE64_BYTES:
-            raise SyncError("refusing oversized encoded candidate")
-        budget.decoded_bytes += len(decoded)
-        if budget.decoded_bytes > MAX_BASE64_TOTAL_BYTES:
-            raise SyncError("refusing encoded content over cumulative safety budget")
-        try:
-            candidates = _decoded_candidates(decoded)
-        except SyncError as exc:
-            raise SyncError("refusing undecodable or binary encoded content") from exc
+        if depth >= MAX_BASE64_DEPTH:
+            raise SyncError("refusing content beyond base64 depth")
         for candidate in candidates:
             for transformed in _text_variants(candidate):
                 variants.append(transformed)

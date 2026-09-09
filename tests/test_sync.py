@@ -190,6 +190,23 @@ class SyncTests(unittest.TestCase):
         with self.assertRaises(sync.SyncError):
             sync.ensure_safe_content(b"AAEC")
 
+    def test_content_scanner_leaves_lowercase_short_words_unclassified(self):
+        sync.ensure_safe_content(b"test")
+
+    def test_text_transform_rejects_deeper_pending_candidate(self):
+        encoded = "token=abc"
+        for _ in range(sync.MAX_TEXT_TRANSFORM_DEPTH + 1):
+            encoded = encoded.replace("%", "%25").replace("=", "%3D")
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(encoded.encode())
+
+    def test_base64_rejects_deeper_pending_candidate(self):
+        encoded = b"token=abc"
+        for _ in range(sync.MAX_BASE64_DEPTH + 1):
+            encoded = base64.b64encode(encoded)
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(encoded)
+
     def test_text_transform_rejects_oversized_initial_text(self):
         with self.assertRaises(sync.SyncError):
             sync._text_variants("x" * (sync.MAX_TEXT_TRANSFORM_BYTES + 1))
