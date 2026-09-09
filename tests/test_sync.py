@@ -195,7 +195,9 @@ class SyncTests(unittest.TestCase):
 
     def test_content_scanner_rejects_direct_newline_wrapped_base64_credentials(self):
         encoded = base64.b64encode(b"token=abc").decode()
-        wrapped = "\n".join(encoded[index : index + 4] for index in range(0, len(encoded), 4))
+        wrapped = "\n".join(
+            encoded[index : index + 4] for index in range(0, len(encoded), 4)
+        )
         with self.assertRaises(sync.SyncError):
             sync.ensure_safe_content(wrapped.encode())
 
