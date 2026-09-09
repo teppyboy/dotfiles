@@ -40,7 +40,13 @@ class Mapping:
 MANIFEST = (
     Mapping("pi", "configs/pi/AGENTS.md", "home", ".pi/AGENTS.md"),
     Mapping("pi", "configs/pi/settings.json", "home", ".pi/agent/settings.json"),
-    Mapping("pi", "configs/pi/mcp.json", "home", ".pi/agent/mcp.json"),
+    Mapping(
+        "pi",
+        "configs/pi/mcp.json",
+        "home",
+        ".pi/agent/mcp.json",
+        mode="sanitized_json",
+    ),
     Mapping(
         "pi",
         "configs/pi/models.json",
@@ -218,7 +224,7 @@ _BASE64_CONTIGUOUS_RE = re.compile(
     r"([A-Za-z0-9+/_-]{8,})(?![A-Za-z0-9+/_-])"
 )
 _BASE64_WRAPPED_RE = re.compile(
-    r"(?<![A-Za-z0-9+/_-])((?:[A-Za-z0-9+/_-]{4}[ \t\r\n]+)+"
+    r"(?<![A-Za-z0-9+/_-])((?:[A-Za-z0-9+/_-]{4}(?:[ \t\r\n]+|\\[nrt]))+"
     r"[A-Za-z0-9+/_-]{2,4}={0,2})(?![A-Za-z0-9+/_-])"
 )
 CREDENTIAL_MARKERS = (
@@ -612,9 +618,12 @@ def _decoded_candidates(content: bytes) -> tuple[str, ...]:
 
 
 def _text_transform_candidates(text: str) -> tuple[str, ...]:
-    candidates: list[str] = [unquote(text)]
-    with contextlib.suppress(UnicodeError):
-        candidates.append(codecs.decode(text, "unicode_escape"))
+    candidates: list[str] = []
+    if re.search(r"%[0-9A-Fa-f]{2}", text):
+        candidates.append(unquote(text))
+    if re.search(r"\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})", text):
+        with contextlib.suppress(UnicodeError):
+            candidates.append(codecs.decode(text, "unicode_escape"))
     return tuple(
         candidate
         for candidate in candidates
@@ -697,7 +706,7 @@ def _decode_base64_match(match, budget: _Base64Budget) -> tuple[str, ...] | None
     budget.candidates += 1
     if budget.candidates > MAX_BASE64_CANDIDATES:
         raise SyncError("refusing content with too many encoded candidates")
-    encoded = re.sub(r"\s+", "", match.group(1) or match.group(2))
+    encoded = re.sub(r"(?:\s|\\[nrt])+", "", match.group(1) or match.group(2))
     if len(encoded) > MAX_BASE64_CHARS:
         raise SyncError("refusing oversized encoded candidate")
     encoded += "=" * (-len(encoded) % 4)
@@ -730,6 +739,7 @@ def _base64_variants(
     for match in iterator(text):
         raw_match = (match.group(1) or match.group(2)).strip()
         embedded = match.start() > 0
+        prefix = ""
         if embedded:
             prefix = text[: match.start()].rstrip()
             quoted_value = prefix.endswith('"') and prefix[:-1].rstrip().endswith(":")
@@ -742,7 +752,33 @@ def _base64_variants(
             continue
         if embedded and raw_match.startswith(("http://", "https://", "//")):
             continue
-        candidates = _decode_base64_match(match, budget)
+        try:
+            candidates = _decode_base64_match(match, budget)
+        except SyncError as exc:
+            # Source/config files contain incidental quoted Base64-looking words.
+            # Keep fail-closed behavior for standalone or credential assignments;
+            # ignore only non-credential embedded fragments that decode as binary.
+            if embedded:
+                key_match = re.search(
+                    r"(?:[\\\"']?([A-Za-z][A-Za-z0-9_-]*)[\\\"']?\\s*[:=])\\s*[\\\"']?$",
+                    prefix,
+                )
+                key = _normalized_key(key_match.group(1)) if key_match else ""
+                credential_key = any(
+                    term in key
+                    for term in (
+                        "token",
+                        "secret",
+                        "password",
+                        "credential",
+                        "apikey",
+                        "authorization",
+                        "bearer",
+                    )
+                )
+                if not credential_key and "binary" in str(exc):
+                    continue
+            raise
         if candidates is None:
             continue
         if depth >= MAX_BASE64_DEPTH:
@@ -764,9 +800,11 @@ def _base64_variants(
 def ensure_safe_content(content: bytes, *, allow_machine_paths: bool = False) -> None:
     """Reject credentials and machine paths without exposing file contents."""
     texts = _decoded_candidates(content)
-    if not allow_machine_paths and any(_looks_machine_path(text) for text in texts):
-        raise SyncError("refusing machine-specific path")
     text_variants = tuple(variant for text in texts for variant in _text_variants(text))
+    if not allow_machine_paths and any(
+        _looks_machine_path(text) for text in (*texts, *text_variants)
+    ):
+        raise SyncError("refusing machine-specific path")
     budget = _Base64Budget()
     variants: list[str] = list(text_variants)
     variants.extend(
@@ -774,6 +812,8 @@ def ensure_safe_content(content: bytes, *, allow_machine_paths: bool = False) ->
         for text in text_variants
         for variant in _base64_variants(text, budget=budget)
     )
+    if not allow_machine_paths and any(_looks_machine_path(text) for text in variants):
+        raise SyncError("refusing machine-specific path")
     if any(marker.search(text) for text in variants for marker in CREDENTIAL_MARKERS):
         raise SyncError("refusing content that resembles a credential")
 
@@ -1017,7 +1057,7 @@ def _copy_content(
         details = _regular_file_stat(destination, "destination")
         if details.st_nlink > 1:
             raise SyncError(f"refusing hardlink destination: {destination}")
-        if not force:
+        if not force and not dry_run:
             raise SyncError(f"destination exists; use --force: {destination}")
     print(f"{'would copy' if dry_run else 'copy'} {source} -> {destination}")
     if not dry_run:
@@ -1071,8 +1111,14 @@ def _directory_entries(source: Path) -> list[Path]:
         dirs[:] = safe_dirs
         for name in sorted(files):
             path = current_path / name
-            if name.casefold() in EXCLUDED_FILE_NAMES or is_sensitive_path(
-                path.relative_to(source)
+            relative = path.relative_to(source)
+            if (
+                name.casefold() in EXCLUDED_FILE_NAMES
+                or (
+                    name.casefold() == "state.ts"
+                    and "worktree" in {part.casefold() for part in relative.parts}
+                )
+                or is_sensitive_path(relative)
             ):
                 continue
             if path.is_symlink():

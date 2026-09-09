@@ -7,7 +7,7 @@
       "command": "pnpx chrome-devtools-mcp@latest --autoConnect"
     },
     "exa": {
-      "url": "https://mcp.exa.ai/mcp?tools=web_fetch_exa,web_search_exa,web_search_advanced_exa"
+      "url": "${PI_API_BASE_URL}"
     }
   }
 }
