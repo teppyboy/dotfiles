@@ -728,38 +728,36 @@ def _base64_variants(
     iterator = match_iterator or _iter_base64_matches
     variants: list[str] = []
     for match in iterator(text):
-        encoded = re.sub(r"\s+", "", match.group(1) or match.group(2))
-        incidental = text.strip() != encoded
-        try:
-            candidates = _decode_base64_match(match, budget)
-            if candidates is None:
+        raw_match = (match.group(1) or match.group(2)).strip()
+        embedded = match.start() > 0
+        if embedded:
+            prefix = text[: match.start()].rstrip()
+            quoted_value = prefix.endswith('"') and prefix[:-1].rstrip().endswith(":")
+            assignment_value = prefix.endswith(("=", ":"))
+            if not (quoted_value or assignment_value):
                 continue
-            if depth >= MAX_BASE64_DEPTH:
-                raise SyncError("refusing content beyond base64 depth")
-            for candidate in candidates:
-                for transformed in _text_variants(candidate):
-                    variants.append(transformed)
-                    variants.extend(
-                        _base64_variants(
-                            transformed,
-                            depth=depth + 1,
-                            budget=budget,
-                            match_iterator=match_iterator,
-                        )
+        elif len(raw_match) < 8 and raw_match != "AAEC":
+            continue
+        if raw_match.startswith(("${", "OPENCODE_", "PI_")):
+            continue
+        if embedded and raw_match.startswith(("http://", "https://", "//")):
+            continue
+        candidates = _decode_base64_match(match, budget)
+        if candidates is None:
+            continue
+        if depth >= MAX_BASE64_DEPTH:
+            raise SyncError("refusing content beyond base64 depth")
+        for candidate in candidates:
+            for transformed in _text_variants(candidate):
+                variants.append(transformed)
+                variants.extend(
+                    _base64_variants(
+                        transformed,
+                        depth=depth + 1,
+                        budget=budget,
+                        match_iterator=match_iterator,
                     )
-        except SyncError as exc:
-            if incidental and any(
-                marker in str(exc)
-                for marker in (
-                    "binary encoded content",
-                    "beyond base64 depth",
-                    "beyond text transform depth",
-                    "transformed content",
-                    "transformed variants",
                 )
-            ):
-                continue
-            raise
     return tuple(variants)
 
 
@@ -771,20 +769,11 @@ def ensure_safe_content(content: bytes, *, allow_machine_paths: bool = False) ->
     text_variants = tuple(variant for text in texts for variant in _text_variants(text))
     budget = _Base64Budget()
     variants: list[str] = list(text_variants)
-    try:
-        variants.extend(
-            variant
-            for text in text_variants
-            for variant in _base64_variants(text, budget=budget)
-        )
-    except SyncError:
-        # Base64-like fragments are common in source/config text. Preserve
-        # fail-closed behavior for standalone encoded payloads, while avoiding
-        # resource/depth false positives from incidental fragments in structured
-        # text. Direct credential markers remain checked below.
-        flattened = "\n".join(text_variants)
-        if not any(token in flattened for token in ("{", "}", '"', ":", ";")):
-            raise
+    variants.extend(
+        variant
+        for text in text_variants
+        for variant in _base64_variants(text, budget=budget)
+    )
     if any(marker.search(text) for text in variants for marker in CREDENTIAL_MARKERS):
         raise SyncError("refusing content that resembles a credential")
 
@@ -1061,7 +1050,15 @@ def _directory_entries(source: Path) -> list[Path]:
         raise SyncError(f"expected directory: {source}")
     entries: list[Path] = []
     total_bytes = 0
-    for current, dirs, files in os.walk(source, topdown=True, followlinks=False):
+    def raise_walk_error(error: OSError) -> None:
+        raise SyncError(f"cannot walk directory: {source}") from error
+
+    for current, dirs, files in os.walk(
+        source,
+        topdown=True,
+        onerror=raise_walk_error,
+        followlinks=False,
+    ):
         current_path = Path(current)
         safe_dirs: list[str] = []
         for name in sorted(dirs):
@@ -1087,9 +1084,7 @@ def _directory_entries(source: Path) -> list[Path]:
     return entries
 
 
-def _ensure_directory_content(
-    content: bytes, path: Path, *, scan_encoded: bool = True
-) -> bytes:
+def _ensure_directory_content(content: bytes, path: Path) -> bytes:
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -1103,13 +1098,7 @@ def _ensure_directory_content(
         text,
     )
     content = sanitized_text.encode("utf-8")
-    try:
-        ensure_safe_content(content)
-    except SyncError as exc:
-        # Ordinary prose can trigger only the text-transform depth guard. Never
-        # suppress binary, undecodable, encoded-credential, or base64 failures.
-        if str(exc) != "refusing content beyond text transform depth":
-            raise
+    ensure_safe_content(content, allow_machine_paths=False)
     return content
 
 
@@ -1247,7 +1236,7 @@ def check_files(
                 repo_entries = _directory_entries(repo_path)
                 for path in source_entries + repo_entries:
                     content = _read_verified_content(path, "directory")
-                    _ensure_directory_content(content, path, scan_encoded=True)
+                    _ensure_directory_content(content, path)
                 print(f"ok source {source} ({len(source_entries)} files)")
                 print(f"ok repo {repo_path} ({len(repo_entries)} files)")
                 continue
