@@ -380,9 +380,16 @@ def _secret_key(key: str) -> bool:
 
 
 def _looks_machine_path(value: str) -> bool:
+    """Detect common local or network paths without exposing their values."""
     return bool(
-        re.search(r"(?i)^[a-z]:[\\/]+(?:users|workspace)[\\/]", value)
-        or re.search(r"^/(?:Users|home)/[^/]+(?:/|$)", value)
+        re.search(r"(?i)(?<![A-Za-z0-9])[A-Z]:[\\/]+", value)
+        or value.startswith("\\\\")
+        or re.search(r"(?<![A-Za-z0-9:/])//[^\\/\s]+/[^\\/\s]+", value)
+        or re.search(
+            r"(?<![A-Za-z0-9:])/(?:Users|home|tmp|private|var|workspace)(?:/|$)",
+            value,
+        )
+        or re.search(r"(?<![A-Za-z0-9])~[\\/]", value)
     )
 
 
@@ -691,9 +698,11 @@ def _base64_variants(
     return tuple(variants)
 
 
-def ensure_safe_content(content: bytes) -> None:
-    """Reject credential formats without exposing file contents."""
+def ensure_safe_content(content: bytes, *, allow_machine_paths: bool = False) -> None:
+    """Reject credentials and machine paths without exposing file contents."""
     texts = _decoded_candidates(content)
+    if not allow_machine_paths and any(_looks_machine_path(text) for text in texts):
+        raise SyncError("refusing machine-specific path")
     text_variants = tuple(variant for text in texts for variant in _text_variants(text))
     budget = _Base64Budget()
     variants: list[str] = list(text_variants)
@@ -925,7 +934,13 @@ def _processed_content(source: Path, item: Mapping) -> bytes:
             _validate_public_tree(parsed)
         else:
             raw.decode("utf-8", errors="strict")
-        ensure_safe_content(raw)
+        ensure_safe_content(
+            raw,
+            allow_machine_paths=(
+                item.app == "pi"
+                and Path(item.repo_path).as_posix() == "configs/pi/settings.json"
+            ),
+        )
         return raw
     if item.mode not in {"sanitized_json", "sanitized_jsonc"}:
         raise SyncError(f"unsupported file mode: {item.mode}")
@@ -1009,11 +1024,19 @@ def _directory_entries(source: Path) -> list[Path]:
 
 def _ensure_directory_content(
     content: bytes, path: Path, *, scan_encoded: bool = True
-) -> None:
+) -> bytes:
     try:
-        content.decode("utf-8")
+        text = content.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise SyncError(f"directory file is not UTF-8: {path}") from exc
+    sanitized_text = re.sub(
+        r"(?i)\b[a-z]:[\\/]+[^\s\"'`),;]*|\\\\\\\\{2,}[^\\/\s\"'`),;]+|"
+        r"(?<![A-Za-z0-9:])/(?:Users|home|tmp|private|var|workspace)/[^\s\"'`),;]*|"
+        r"(?<![A-Za-z0-9])~[\\/][^\s\"'`),;]*",
+        "${OPENCODE_LOCAL_PATH}",
+        text,
+    )
+    content = sanitized_text.encode("utf-8")
     # Directory source code/docs may mention credential words in prose. Require
     # an assignment-like value before rejecting a text file.
     texts = _decoded_candidates(content)
@@ -1042,6 +1065,7 @@ def _ensure_directory_content(
         "${error",
         "getsession(database",
     }
+    ensure_safe_content(content)
     for text in texts:
         if any(marker.search(text) for marker in CREDENTIAL_MARKERS[1:]):
             # PEM/JWK/provider markers are always sensitive; prose references to
@@ -1057,21 +1081,8 @@ def _ensure_directory_content(
         for text in texts:
             for match in _iter_base64_matches(text):
                 encoded = (match.group(1) or match.group(2)).encode("ascii")
-                try:
-                    ensure_safe_content(encoded)
-                except SyncError as exc:
-                    if any(
-                        reason in str(exc)
-                        for reason in (
-                            "binary encoded content",
-                            "beyond base64 depth",
-                            "beyond text transform depth",
-                            "transformed content",
-                            "transformed variants",
-                        )
-                    ):
-                        continue
-                    raise
+                ensure_safe_content(encoded)
+    return content
 
 
 def _export_directory(
@@ -1082,7 +1093,7 @@ def _export_directory(
         relative = path.relative_to(source)
         target = _safe_join(destination, relative, label="repository")
         content = _read_verified_content(path, "source")
-        _ensure_directory_content(content, path)
+        content = _ensure_directory_content(content, path)
         _copy_content(path, target, content, dry_run=dry_run, force=True)
         count += 1
     return count
@@ -1097,7 +1108,7 @@ def _install_directory(
         target = _safe_join(destination, relative, label="destination")
         content = _read_verified_content(path, "source")
         content = _read_verified_content(path, "source")
-        _ensure_directory_content(content, path)
+        content = _ensure_directory_content(content, path)
         _copy_content(path, target, content, dry_run=dry_run, force=force)
         count += 1
     return count

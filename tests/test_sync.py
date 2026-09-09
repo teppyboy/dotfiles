@@ -438,6 +438,145 @@ class SyncTests(unittest.TestCase):
             )
             self.assertFalse((repo / "configs/opencode/sibling.ts").exists())
 
+    def test_machine_paths_are_rejected_in_raw_and_directory_files(self):
+        for content in (
+            b"D:\\Projects\\repo",
+            b"/tmp/repo",
+            b"~/repo",
+            b"\\\\server\\share\\repo",
+        ):
+            with self.subTest(content=content), self.assertRaises(sync.SyncError):
+                sync.ensure_safe_content(content)
+
+    def test_nested_directory_credentials_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            source = home / ".config" / "opencode" / "plugins"
+            source.mkdir(parents=True)
+            repo.mkdir()
+            (source / "nested").mkdir()
+            (source / "nested" / "unsafe.ts").write_text(
+                'const token = "live";', encoding="utf-8"
+            )
+            (source / "nested" / "provider.ts").write_text(
+                'const OPENAI_API_KEY = "live";', encoding="utf-8"
+            )
+            manifest = (
+                sync.Mapping(
+                    "opencode",
+                    "configs/opencode/plugins",
+                    "home",
+                    ".config/opencode/plugins",
+                    mode="directory",
+                ),
+            )
+            with self.assertRaises(sync.SyncError):
+                sync.export_files(manifest, repo, platform="darwin", home=home)
+            self.assertFalse(
+                (repo / "configs/opencode/plugins/nested/unsafe.ts").exists()
+            )
+
+    def test_sanitizer_replaces_machine_paths(self):
+        for value in (
+            r"D:\\Projects\\repo",
+            "/" + "tmp" + "/repo",
+            "~/repo",
+            r"\\\\server\\share\\repo",
+        ):
+            source = json.dumps({"path": value})
+            output = sync.sanitize_config(source, "opencode")
+            self.assertNotIn(value, output)
+            self.assertIn("${OPENCODE_LOCAL_PATH}", output)
+
+    def test_full_manifest_export_install_check_round_trip(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            installed = root / "installed"
+            dry_repo = root / "dry-repo"
+            repo.mkdir()
+            fixtures = {}
+            for item in sync.MANIFEST:
+                source = home / Path(item.relative_path)
+                if item.mode == "directory":
+                    source.mkdir(parents=True, exist_ok=True)
+                    fixture = source / "example.md"
+                    fixture.write_text("# public fixture\\n", encoding="utf-8")
+                    fixtures[item.repo_path] = fixture
+                    continue
+                source.parent.mkdir(parents=True, exist_ok=True)
+                if item.mode == "sanitized_json":
+                    source.write_text(
+                        '{"baseURL":"https://private.example/v1","apiKey":"live-value"}',
+                        encoding="utf-8",
+                    )
+                elif item.repo_path.endswith("dcp.jsonc"):
+                    source.write_text(
+                        '{\n  // public schema\n  "$schema": "https://example.test/dcp.json",\n}\n',
+                        encoding="utf-8",
+                    )
+                else:
+                    source.write_text('{"public":true}', encoding="utf-8")
+                fixtures[item.repo_path] = source
+
+            before = {path: path.read_bytes() for path in fixtures.values()}
+            self.assertGreater(
+                sync.export_files(sync.MANIFEST, repo, platform="darwin", home=home), 0
+            )
+            self.assertEqual(
+                {path: path.read_bytes() for path in fixtures.values()}, before
+            )
+            for item in sync.MANIFEST:
+                exported = repo / item.repo_path
+                if item.mode == "directory":
+                    self.assertTrue((exported / "example.md").is_file())
+                elif item.mode.startswith("sanitized"):
+                    text = exported.read_text(encoding="utf-8")
+                    self.assertIn("${", text)
+                    self.assertNotIn("private.example", text)
+                    self.assertNotIn("live-value", text)
+                elif item.repo_path.endswith("dcp.jsonc"):
+                    self.assertIn(
+                        "// public schema", exported.read_text(encoding="utf-8")
+                    )
+
+            self.assertEqual(
+                sync.check_files(sync.MANIFEST, repo, platform="darwin", home=home), 0
+            )
+            self.assertEqual(
+                sync.export_files(
+                    sync.MANIFEST, dry_repo, platform="darwin", home=home, dry_run=True
+                ),
+                sync.export_files(
+                    sync.MANIFEST, repo, platform="darwin", home=home, dry_run=True
+                ),
+            )
+            self.assertFalse(dry_repo.exists())
+            self.assertEqual(
+                sync.install_files(
+                    sync.MANIFEST, repo, platform="darwin", home=installed, force=True
+                ),
+                sync.install_files(
+                    sync.MANIFEST,
+                    repo,
+                    platform="darwin",
+                    home=installed,
+                    dry_run=True,
+                    force=True,
+                ),
+            )
+            self.assertEqual(
+                sync.check_files(
+                    sync.MANIFEST, repo, platform="darwin", home=installed
+                ),
+                0,
+            )
+            self.assertFalse((home / ".config" / "opencode" / "auth.json").exists())
+            self.assertFalse((repo / "configs" / "opencode" / "node_modules").exists())
+
     def test_sanitized_export_leaves_source_unchanged(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
