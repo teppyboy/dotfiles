@@ -186,6 +186,19 @@ class SyncTests(unittest.TestCase):
         with self.assertRaises(sync.SyncError):
             sync.ensure_safe_content(bytes((0, 1, 2)))
 
+    def test_content_scanner_rejects_unpadded_short_binary_base64(self):
+        with self.assertRaises(sync.SyncError):
+            sync.ensure_safe_content(b"AAEC")
+
+    def test_text_transform_rejects_oversized_initial_text(self):
+        with self.assertRaises(sync.SyncError):
+            sync._text_variants("x" * (sync.MAX_TEXT_TRANSFORM_BYTES + 1))
+
+    def test_text_transform_rejects_surrogate_code_points(self):
+        self.assertFalse(sync._is_text("bad\ud800"))
+        with self.assertRaises(sync.SyncError):
+            sync._text_variants("bad\ud800")
+
     def test_content_scanner_rejects_encoded_credentials(self):
         encoded = base64.b64encode(b"token=abc").decode()
         for content in (
@@ -221,8 +234,12 @@ class SyncTests(unittest.TestCase):
             sync.ensure_safe_content(payload)
 
     def test_base64_wrapped_mixed_transform_credentials_are_rejected(self):
-        payload = base64.b64encode(b"value=OPENAI%255Cx5fAPI%255Cx5fKEY%253Dabc").decode()
-        wrapped = "\\n".join(payload[index : index + 4] for index in range(0, len(payload), 4))
+        payload = base64.b64encode(
+            b"value=OPENAI%255Cx5fAPI%255Cx5fKEY%253Dabc"
+        ).decode()
+        wrapped = "\\n".join(
+            payload[index : index + 4] for index in range(0, len(payload), 4)
+        )
         with self.assertRaises(sync.SyncError):
             sync.ensure_safe_content(f"value={wrapped}".encode())
 
@@ -469,7 +486,9 @@ class SyncTests(unittest.TestCase):
             destination = root / "destination.txt"
             source.write_text("safe", encoding="utf-8")
             with (
-                mock.patch.object(sync.os, "replace", side_effect=OSError("publish failed")),
+                mock.patch.object(
+                    sync.os, "replace", side_effect=OSError("publish failed")
+                ),
                 self.assertRaises(OSError),
             ):
                 sync.copy_file(source, destination, dry_run=False, force=True)

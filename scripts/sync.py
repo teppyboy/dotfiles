@@ -99,8 +99,8 @@ MAX_TEXT_TRANSFORM_DEPTH = 4
 MAX_TEXT_TRANSFORM_VARIANTS = 128
 MAX_TEXT_TRANSFORM_BYTES = 2 * 1024 * 1024
 _BASE64_CONTIGUOUS_RE = re.compile(
-    r"(?<![A-Za-z0-9+/_-])((?:[A-Za-z0-9+/_-]{8,}|"
-    r"[A-Za-z0-9+/_-]{2,})={1,2})(?![A-Za-z0-9+/_=-])|"
+    r"(?<![A-Za-z0-9+/_-])((?=[A-Z0-9+/_-])[A-Za-z0-9+/_-]{2,}"
+    r"={0,2})(?![A-Za-z0-9+/_=-])|"
     r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{8,})(?![A-Za-z0-9+/_-])"
 )
 _BASE64_WRAPPED_RE = re.compile(
@@ -165,9 +165,18 @@ def is_sensitive_path(path: Path) -> bool:
 
 def _is_text(text: str) -> bool:
     return not any(
-        (ord(character) < 32 and character not in "\t\n\r") or ord(character) == 0xFFFD
+        (ord(character) < 32 and character not in "\t\n\r")
+        or ord(character) == 0xFFFD
+        or 0xD800 <= ord(character) <= 0xDFFF
         for character in text
     )
+
+
+def _utf8_size(text: str) -> int:
+    try:
+        return len(text.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise SyncError("refusing text containing invalid Unicode") from exc
 
 
 def _looks_like_utf16(content: bytes) -> bool:
@@ -224,7 +233,9 @@ def _text_variants(text: str) -> tuple[str, ...]:
     """Apply bounded percent/unicode transforms to their transitive closure."""
     worklist = [(text, 0)]
     seen = {text}
-    total_bytes = len(text.encode("utf-8"))
+    total_bytes = _utf8_size(text)
+    if total_bytes > MAX_TEXT_TRANSFORM_BYTES:
+        raise SyncError("refusing transformed content over safety budget")
     variants: list[str] = []
     while worklist:
         current, depth = worklist.pop(0)
@@ -238,7 +249,7 @@ def _text_variants(text: str) -> tuple[str, ...]:
             if candidate == current or candidate in seen or not _is_text(candidate):
                 continue
             seen.add(candidate)
-            total_bytes += len(candidate.encode("utf-8"))
+            total_bytes += _utf8_size(candidate)
             if len(seen) > MAX_TEXT_TRANSFORM_VARIANTS:
                 raise SyncError("refusing content with too many transformed variants")
             if total_bytes > MAX_TEXT_TRANSFORM_BYTES:
