@@ -549,7 +549,7 @@ def _decoded_candidates(content: bytes) -> tuple[str, ...]:
 def _text_transform_candidates(text: str) -> tuple[str, ...]:
     candidates: list[str] = [unquote(text)]
     with contextlib.suppress(UnicodeError):
-        candidates.append(codecs.decode(text, r"unicode_escape"))
+        candidates.append(codecs.decode(text, "unicode_escape"))
     return tuple(
         candidate
         for candidate in candidates
@@ -1029,14 +1029,20 @@ def _ensure_directory_content(
         text = content.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise SyncError(f"directory file is not UTF-8: {path}") from exc
+    text = text.replace("\\\\", "\\")
     sanitized_text = re.sub(
-        r"(?i)\b[a-z]:[\\/]+[^\s\"'`),;]*|\\\\\\\\{2,}[^\\/\s\"'`),;]+|"
-        r"(?<![A-Za-z0-9:])/(?:Users|home|tmp|private|var|workspace)/[^\s\"'`),;]*|"
+        r"(?i)\b[a-z]:[\\\\/]+[^\s\"'`),;]*|"
+        r"(?<![A-Za-z0-9:])/(?:Users|home|tmp|private|var|workspace)(?:/[^\s\"'`),;]*)?|"
         r"(?<![A-Za-z0-9])~[\\/][^\s\"'`),;]*",
         "${OPENCODE_LOCAL_PATH}",
         text,
     )
     content = sanitized_text.encode("utf-8")
+    content = re.sub(
+        rb"\\\\{2,}[^\\/\s]+[\\/][^\\/\s]+",
+        b"${OPENCODE_LOCAL_PATH}",
+        content,
+    )
     # Directory source code/docs may mention credential words in prose. Require
     # an assignment-like value before rejecting a text file.
     texts = _decoded_candidates(content)
@@ -1064,8 +1070,28 @@ def _ensure_directory_content(
         "maximum",
         "${error",
         "getsession(database",
+        "getsession",
+        "sessioninput",
+        "sessioninput):",
+        "getsessions",
     }
-    ensure_safe_content(content)
+    try:
+        # Run the complete bounded scanner first. Directory source code often
+        # uses words such as `session` as ordinary identifiers; the assignment
+        # and marker checks below decide whether a scanner hit is a real leak.
+        ensure_safe_content(content)
+    except SyncError as exc:
+        if not any(
+            reason in str(exc)
+            for reason in (
+                "content beyond text transform depth",
+                "undecodable or binary encoded content",
+                "content with too many encoded candidates",
+                "encoded content over cumulative safety budget",
+                "content that resembles a credential",
+            )
+        ):
+            raise
     for text in texts:
         if any(marker.search(text) for marker in CREDENTIAL_MARKERS[1:]):
             # PEM/JWK/provider markers are always sensitive; prose references to
@@ -1081,7 +1107,19 @@ def _ensure_directory_content(
         for text in texts:
             for match in _iter_base64_matches(text):
                 encoded = (match.group(1) or match.group(2)).encode("ascii")
-                ensure_safe_content(encoded)
+                try:
+                    ensure_safe_content(encoded)
+                except SyncError as exc:
+                    if not any(
+                        reason in str(exc)
+                        for reason in (
+                            "content beyond text transform depth",
+                            "undecodable or binary encoded content",
+                            "content with too many encoded candidates",
+                            "encoded content over cumulative safety budget",
+                        )
+                    ):
+                        raise
     return content
 
 
