@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
-import codecs
 import contextlib
 import json
 import os
@@ -617,13 +616,37 @@ def _decoded_candidates(content: bytes) -> tuple[str, ...]:
     return tuple(candidates)
 
 
+def _decode_unicode_escapes(text: str) -> str:
+    """Decode explicit unicode escapes; preserve unknown backslashes."""
+    result: list[str] = []
+    index = 0
+    sizes = {"x": 2, "u": 4, "U": 8}
+    while index < len(text):
+        if text[index] != "\\" or index + 1 >= len(text):
+            result.append(text[index])
+            index += 1
+            continue
+        marker = text[index + 1]
+        size = sizes.get(marker)
+        if size is not None and index + 2 + size <= len(text):
+            digits = text[index + 2 : index + 2 + size]
+            if len(digits) == size and all(
+                char in "0123456789abcdefABCDEF" for char in digits
+            ):
+                result.append(chr(int(digits, 16)))
+                index += size + 2
+                continue
+        result.extend(("\\", marker))
+        index += 2
+    return "".join(result)
+
+
 def _text_transform_candidates(text: str) -> tuple[str, ...]:
     candidates: list[str] = []
     if re.search(r"%[0-9A-Fa-f]{2}", text):
         candidates.append(unquote(text))
     if re.search(r"\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})", text):
-        with contextlib.suppress(UnicodeError):
-            candidates.append(codecs.decode(text, "unicode_escape"))
+        candidates.append(_decode_unicode_escapes(text))
     return tuple(
         candidate
         for candidate in candidates
@@ -755,9 +778,7 @@ def _base64_variants(
         try:
             candidates = _decode_base64_match(match, budget)
         except SyncError as exc:
-            # Source/config files contain incidental quoted Base64-looking words.
-            # Keep fail-closed behavior for standalone or credential assignments;
-            # ignore only non-credential embedded fragments that decode as binary.
+            # Ignore only incidental non-credential embedded binary fragments.
             if not embedded:
                 raise
             key_match = re.search(
@@ -777,7 +798,9 @@ def _base64_variants(
                     "bearer",
                 )
             )
-            if not credential_key and "binary" in str(exc):
+            if credential_key:
+                raise
+            if "binary" in str(exc):
                 continue
             raise
         if candidates is None:
