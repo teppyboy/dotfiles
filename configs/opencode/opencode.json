@@ -7,7 +7,7 @@
     "opencode-vibeguard@latest",
     "@plannotator/opencode@latest",
     "@dietrichgebert/ponytail",
-    "F:\\Workspace\\opencode-crofai\\dist\\index.js"
+    "${OPENCODE_LOCAL_PLUGIN_PATH}"
   ],
   "mcp": {
     "chrome-devtools-mcp": {
@@ -36,7 +36,7 @@
     "headroom": {
       "type": "local",
       "command": [
-        "C:\\Users\\tretrauit\\.local\\bin\\headroom.EXE",
+        "${OPENCODE_HEADROOM_COMMAND}",
         "mcp",
         "serve"
       ],

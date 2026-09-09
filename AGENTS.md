@@ -10,6 +10,9 @@
 - Keep JSON/JSONC sanitization key/path rules explicit and manually reviewed.
 - Never sync `auth.json`, runtime state, package locks, `node_modules`, or installed package source.
 - Use explicit directory roots only; never sync a broad parent directory.
+- Pi `settings.json` is a user-approved verbatim exception; manually review it before every commit.
+- Sanitize API endpoints and credential values before syncing JSON/JSONC configs.
+- Never sync `auth.json`, runtime state, package locks, `node_modules`, or installed package source.
 
 ## Checks
 

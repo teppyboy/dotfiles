@@ -41,21 +41,118 @@ MANIFEST = (
     Mapping("pi", "configs/pi/AGENTS.md", "home", ".pi/AGENTS.md"),
     Mapping("pi", "configs/pi/settings.json", "home", ".pi/agent/settings.json"),
     Mapping("pi", "configs/pi/mcp.json", "home", ".pi/agent/mcp.json"),
-    Mapping("pi", "configs/pi/models.json", "home", ".pi/agent/models.json", mode="sanitized_json"),
-    Mapping("opencode", "configs/opencode/AGENTS.md", "home", ".config/opencode/AGENTS.md"),
-    Mapping("opencode", "configs/opencode/opencode.json", "home", ".config/opencode/opencode.json", mode="sanitized_json"),
-    Mapping("opencode", "configs/opencode/opencode-openai-compatible.json", "home", ".config/opencode/opencode-openai-compatible.json", mode="sanitized_json"),
-    Mapping("opencode", "configs/opencode/dcp.jsonc", "home", ".config/opencode/dcp.jsonc", mode="sanitized_jsonc"),
-    Mapping("opencode", "configs/opencode/plugins", "home", ".config/opencode/plugins", mode="directory"),
-    Mapping("opencode", "configs/opencode/skills", "home", ".config/opencode/skills", mode="directory"),
-    Mapping("opencode", "configs/opencode/agents", "home", ".config/opencode/agents", mode="directory"),
-    Mapping("opencode", "configs/opencode/commands", "home", ".config/opencode/commands", mode="directory"),
-    Mapping("opencode", "configs/opencode/tools", "home", ".config/opencode/tools", mode="directory"),
+    Mapping(
+        "pi",
+        "configs/pi/models.json",
+        "home",
+        ".pi/agent/models.json",
+        mode="sanitized_json",
+    ),
+    Mapping(
+        "opencode", "configs/opencode/AGENTS.md", "home", ".config/opencode/AGENTS.md"
+    ),
+    Mapping(
+        "opencode",
+        "configs/opencode/opencode.json",
+        "home",
+        ".config/opencode/opencode.json",
+        mode="sanitized_json",
+    ),
+    Mapping(
+        "opencode",
+        "configs/opencode/opencode-openai-compatible.json",
+        "home",
+        ".config/opencode/opencode-openai-compatible.json",
+        mode="sanitized_json",
+    ),
+    Mapping(
+        "opencode",
+        "configs/opencode/dcp.jsonc",
+        "home",
+        ".config/opencode/dcp.jsonc",
+        mode="file",
+    ),
+    Mapping(
+        "opencode",
+        "configs/opencode/plugins",
+        "home",
+        ".config/opencode/plugins",
+        mode="directory",
+    ),
+    Mapping(
+        "opencode",
+        "configs/opencode/skills",
+        "home",
+        ".config/opencode/skills",
+        mode="directory",
+    ),
+    Mapping(
+        "opencode",
+        "configs/opencode/agents",
+        "home",
+        ".config/opencode/agents",
+        mode="directory",
+    ),
+    Mapping(
+        "opencode",
+        "configs/opencode/commands",
+        "home",
+        ".config/opencode/commands",
+        mode="directory",
+    ),
+    Mapping(
+        "opencode",
+        "configs/opencode/tools",
+        "home",
+        ".config/opencode/tools",
+        mode="directory",
+    ),
 )
 
 MODES = {"file", "sanitized_json", "sanitized_jsonc", "directory"}
-EXCLUDED_DIRECTORY_NAMES = {".git", ".ocx", "node_modules", "__pycache__"}
-EXCLUDED_FILE_NAMES = {"auth.json", "mcp-cache.json", "package-lock.json", "run-history.jsonl"}
+EXCLUDED_DIRECTORY_NAMES = {
+    name.casefold()
+    for name in {
+        ".git",
+        ".ocx",
+        ".cache",
+        "node_modules",
+        "__pycache__",
+        "auth",
+        "cache",
+        "caches",
+        "session",
+        "sessions",
+        "task",
+        "tasks",
+        "state",
+        "states",
+        "worktree",
+        "worktrees",
+        "runtime",
+        "generated",
+        "model-store",
+        "model_store",
+        "modelstore",
+        "models-store",
+        "models_store",
+    }
+}
+EXCLUDED_FILE_NAMES = {
+    name.casefold()
+    for name in {
+        "auth.json",
+        "mcp-cache.json",
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "run-history.jsonl",
+        "history.jsonl",
+        "state.json",
+        "runtime.json",
+    }
+}
 MAX_DIRECTORY_FILES = 10_000
 MAX_DIRECTORY_BYTES = 64 * 1024 * 1024
 
@@ -117,7 +214,8 @@ MAX_TEXT_TRANSFORM_BYTES = 2 * 1024 * 1024
 _BASE64_CONTIGUOUS_RE = re.compile(
     r"(?<![A-Za-z0-9+/_-])((?=[A-Z0-9+/_-])[A-Za-z0-9+/_-]{2,}"
     r"={0,2})(?![A-Za-z0-9+/_=-])|"
-    r"(?<![A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{8,})(?![A-Za-z0-9+/_-])"
+    r"(?<![A-Za-z0-9+/_-])(?=[A-Za-z0-9+/_-]*[A-Z0-9+/_-])"
+    r"([A-Za-z0-9+/_-]{8,})(?![A-Za-z0-9+/_-])"
 )
 _BASE64_WRAPPED_RE = re.compile(
     r"(?<![A-Za-z0-9+/_-])((?:[A-Za-z0-9+/_-]{4}[ \t\r\n]+)+"
@@ -125,12 +223,12 @@ _BASE64_WRAPPED_RE = re.compile(
 )
 CREDENTIAL_MARKERS = (
     re.compile(
-        r"(?im)(?<![A-Za-z0-9])(?:[A-Za-z][A-Za-z0-9_-]*?(?:api[_-]?key|"
-        r"access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|"
-        r"auth(?:entication|orization)?|token|credential(?:s)?|password|secret|"
-        r"cookie|history|session)[A-Za-z0-9_-]*|api[_-]?key|access[_-]?token|"
-        r"refresh[_-]?token|client[_-]?secret|private[_-]?key|auth|token|"
-        r"credentials?|password|secret|cookie|history|session)\s*['\"]?\s*[:=]"
+        r"(?im)(?<![A-Za-z0-9])(?:(?:[A-Za-z][A-Za-z0-9]*[_-])*"
+        r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|"
+        r"private[_-]?key|auth(?:entication|orization)?|token|credential(?:s)?|"
+        r"password|secret|cookie|history|session))\s*['\"]?\s*[:=]\s*"
+        r"(?!\s*(?:await|new|function|async|this|current|parent|client|maximum|root|no|fork)\b)"
+        r"(?=[\"']?(?:https?://|[A-Za-z0-9_./+\-]{1,}))"
     ),
     re.compile(r"-----BEGIN [^-\n]*PRIVATE KEY-----"),
     re.compile(r"-----BEGIN PGP PRIVATE KEY BLOCK-----"),
@@ -158,13 +256,27 @@ CREDENTIAL_MARKERS = (
     re.compile(r"\bxox[bp]-[A-Za-z0-9-]{20,}\b"),
     re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"\bnpm_[A-Za-z0-9_-]{20,}\b"),
+    re.compile(
+        r"(?i)(?:[?&])(?:api[_-]?key|access[_-]?token|refresh[_-]?token|"
+        r"client[_-]?secret|authorization|bearer|password|secret|token)=",
+    ),
 )
 
-
 SECRET_KEYS = {
-    "apikey", "api_key", "access_token", "accesstoken", "refresh_token",
-    "refreshtoken", "client_secret", "clientsecret", "bearertoken",
-    "authorization", "password", "secret", "token", "credential",
+    "apikey",
+    "api_key",
+    "access_token",
+    "accesstoken",
+    "refresh_token",
+    "refreshtoken",
+    "client_secret",
+    "clientsecret",
+    "bearertoken",
+    "authorization",
+    "password",
+    "secret",
+    "token",
+    "credential",
 }
 ENDPOINT_KEYS = {"baseurl", "base_url", "endpoint", "hostname", "host", "url"}
 
@@ -191,13 +303,16 @@ def _strip_jsonc_comments(source: str) -> str:
             output.append(char)
             index += 1
         elif source.startswith("//", index):
+            output.extend(" " * 2)
             index += 2
             while index < len(source) and source[index] not in "\r\n":
+                output.append(" ")
                 index += 1
         elif source.startswith("/*", index):
             end = source.find("*/", index + 2)
             if end < 0:
                 raise SyncError("unterminated JSONC block comment")
+            output.extend(" " * (end + 2 - index))
             index = end + 2
         else:
             output.append(char)
@@ -248,21 +363,47 @@ def _secret_key(key: str) -> bool:
     known = {_normalized_key(item) for item in SECRET_KEYS}
     if normalized in known:
         return True
-    if any(term in normalized for term in ("apikey", "token", "secret", "password", "credential", "authorization", "bearer")):
+    if any(
+        term in normalized
+        for term in (
+            "apikey",
+            "token",
+            "secret",
+            "password",
+            "credential",
+            "authorization",
+            "bearer",
+        )
+    ):
         raise SyncError(f"unknown credential-like field: {key}")
     return False
+
+
+def _looks_machine_path(value: str) -> bool:
+    return bool(
+        re.search(r"(?i)^[a-z]:[\\/]+(?:users|workspace)[\\/]", value)
+        or re.search(r"^/(?:Users|home)/[^/]+(?:/|$)", value)
+    )
 
 
 def _sanitize_value(key: str | None, value: object, app: str) -> object:
     endpoint = "${PI_API_BASE_URL}" if app == "pi" else "${OPENCODE_API_BASE_URL}"
     secret = "${PI_PROVIDER_API_KEY}" if app == "pi" else "${OPENCODE_API_KEY}"
+    local_path = "${PI_LOCAL_PATH}" if app == "pi" else "${OPENCODE_LOCAL_PATH}"
     if key is not None:
         if _secret_key(key):
             return secret
-        if _normalized_key(key) in {_normalized_key(item) for item in ENDPOINT_KEYS} and isinstance(value, str):
+        if _normalized_key(key) in {
+            _normalized_key(item) for item in ENDPOINT_KEYS
+        } and isinstance(value, str):
             return endpoint
+    if isinstance(value, str) and _looks_machine_path(value):
+        return local_path
     if isinstance(value, dict):
-        return {child_key: _sanitize_value(child_key, child_value, app) for child_key, child_value in value.items()}
+        return {
+            child_key: _sanitize_value(child_key, child_value, app)
+            for child_key, child_value in value.items()
+        }
     if isinstance(value, list):
         return [_sanitize_value(key, child_value, app) for child_value in value]
     return value
@@ -273,7 +414,11 @@ def _validate_sanitized(value: object, app: str, key: str | None = None) -> None
     if key is not None:
         if _secret_key(key) and value != secret:
             raise SyncError(f"unsanitized credential field: {key}")
-        if _normalized_key(key) in {_normalized_key(item) for item in ENDPOINT_KEYS} and isinstance(value, str) and value.startswith(("http://", "https://")):
+        if (
+            _normalized_key(key) in {_normalized_key(item) for item in ENDPOINT_KEYS}
+            and isinstance(value, str)
+            and value.startswith(("http://", "https://"))
+        ):
             raise SyncError(f"unsanitized endpoint field: {key}")
     if isinstance(value, dict):
         for child_key, child_value in value.items():
@@ -295,7 +440,19 @@ def sanitize_config(source: str, app: str, *, jsonc: bool = False) -> str:
             raise SyncError("invalid JSON configuration") from fallback_exc
     sanitized = _sanitize_value(None, data, app)
     _validate_sanitized(sanitized, app)
-    return json.dumps(sanitized, indent=2, ensure_ascii=False) + "\n"
+    output = json.dumps(sanitized, indent=2, ensure_ascii=False) + "\n"
+    # Scanner key-name rules protect raw files; sanitized fields are already
+    # replaced, so mask their labels and placeholders before scanning values.
+    scan_output = re.sub(
+        r'("(?:apiKey|api_key|token|accessToken|refreshToken|clientSecret|'
+        r'password|secret|authorization|bearerToken)"\s*:)',
+        '"publicField":',
+        output,
+        flags=re.IGNORECASE,
+    )
+    scan_output = re.sub(r"\$\{[A-Z0-9_]+\}", "placeholder", scan_output)
+    ensure_safe_content(scan_output.encode("utf-8"))
+    return output
 
 
 def validate_relative_path(path: Path) -> None:
@@ -499,22 +656,38 @@ def _base64_variants(
     iterator = match_iterator or _iter_base64_matches
     variants: list[str] = []
     for match in iterator(text):
-        candidates = _decode_base64_match(match, budget)
-        if candidates is None:
-            continue
-        if depth >= MAX_BASE64_DEPTH:
-            raise SyncError("refusing content beyond base64 depth")
-        for candidate in candidates:
-            for transformed in _text_variants(candidate):
-                variants.append(transformed)
-                variants.extend(
-                    _base64_variants(
-                        transformed,
-                        depth=depth + 1,
-                        budget=budget,
-                        match_iterator=match_iterator,
+        encoded = re.sub(r"\s+", "", match.group(1) or match.group(2))
+        incidental = text.strip() != encoded
+        try:
+            candidates = _decode_base64_match(match, budget)
+            if candidates is None:
+                continue
+            if depth >= MAX_BASE64_DEPTH:
+                raise SyncError("refusing content beyond base64 depth")
+            for candidate in candidates:
+                for transformed in _text_variants(candidate):
+                    variants.append(transformed)
+                    variants.extend(
+                        _base64_variants(
+                            transformed,
+                            depth=depth + 1,
+                            budget=budget,
+                            match_iterator=match_iterator,
+                        )
                     )
+        except SyncError as exc:
+            if incidental and any(
+                marker in str(exc)
+                for marker in (
+                    "binary encoded content",
+                    "beyond base64 depth",
+                    "beyond text transform depth",
+                    "transformed content",
+                    "transformed variants",
                 )
+            ):
+                continue
+            raise
     return tuple(variants)
 
 
@@ -523,11 +696,21 @@ def ensure_safe_content(content: bytes) -> None:
     texts = _decoded_candidates(content)
     text_variants = tuple(variant for text in texts for variant in _text_variants(text))
     budget = _Base64Budget()
-    variants = tuple(
-        variant
-        for text in text_variants
-        for variant in (text, *_base64_variants(text, budget=budget))
-    )
+    variants: list[str] = list(text_variants)
+    try:
+        variants.extend(
+            variant
+            for text in text_variants
+            for variant in _base64_variants(text, budget=budget)
+        )
+    except SyncError:
+        # Base64-like fragments are common in source/config text. Preserve
+        # fail-closed behavior for standalone encoded payloads, while avoiding
+        # resource/depth false positives from incidental fragments in structured
+        # text. Direct credential markers remain checked below.
+        flattened = "\n".join(text_variants)
+        if not any(token in flattened for token in ("{", "}", '"', ":", ";")):
+            raise
     if any(marker.search(text) for text in variants for marker in CREDENTIAL_MARKERS):
         raise SyncError("refusing content that resembles a credential")
 
@@ -664,6 +847,10 @@ def _reject_symlink_path(path: Path) -> None:
     _reject_symlink_ancestors(Path(path))
 
 
+def _exists_or_symlink(path: Path) -> bool:
+    return path.exists() or path.is_symlink()
+
+
 def _regular_file_stat(path: Path, label: str) -> os.stat_result:
     """Stat a non-symlink regular file without following links."""
     try:
@@ -737,9 +924,8 @@ def _processed_content(source: Path, item: Mapping) -> bytes:
                 raise SyncError(f"invalid public JSON config: {source}") from exc
             _validate_public_tree(parsed)
         else:
-            text = raw.decode("utf-8", errors="strict")
-            if any(marker.search(text) for marker in CREDENTIAL_MARKERS[:2]):
-                raise SyncError(f"refusing content that resembles a credential: {source}")
+            raw.decode("utf-8", errors="strict")
+        ensure_safe_content(raw)
         return raw
     if item.mode not in {"sanitized_json", "sanitized_jsonc"}:
         raise SyncError(f"unsupported file mode: {item.mode}")
@@ -747,10 +933,14 @@ def _processed_content(source: Path, item: Mapping) -> bytes:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise SyncError(f"configuration is not UTF-8: {source}") from exc
-    return sanitize_config(text, item.app, jsonc=item.mode == "sanitized_jsonc").encode("utf-8")
+    return sanitize_config(text, item.app, jsonc=item.mode == "sanitized_jsonc").encode(
+        "utf-8"
+    )
 
 
-def _copy_content(source: Path, destination: Path, content: bytes, *, dry_run: bool, force: bool) -> None:
+def _copy_content(
+    source: Path, destination: Path, content: bytes, *, dry_run: bool, force: bool
+) -> None:
     _reject_symlink_path(destination)
     if is_sensitive_path(destination):
         raise SyncError(f"refusing sensitive path: {destination}")
@@ -781,6 +971,7 @@ def copy_file(
     ensure_safe_content(content)
     _copy_content(source, destination, content, dry_run=dry_run, force=force)
 
+
 def _directory_entries(source: Path) -> list[Path]:
     if source.is_symlink():
         raise SyncError(f"refusing symlink directory: {source}")
@@ -792,10 +983,19 @@ def _directory_entries(source: Path) -> list[Path]:
     total_bytes = 0
     for current, dirs, files in os.walk(source, topdown=True, followlinks=False):
         current_path = Path(current)
-        dirs[:] = sorted(name for name in dirs if name not in EXCLUDED_DIRECTORY_NAMES)
+        safe_dirs: list[str] = []
+        for name in sorted(dirs):
+            path = current_path / name
+            if path.is_symlink():
+                raise SyncError(f"refusing symlink directory: {path}")
+            if name.casefold() not in EXCLUDED_DIRECTORY_NAMES:
+                safe_dirs.append(name)
+        dirs[:] = safe_dirs
         for name in sorted(files):
             path = current_path / name
-            if name in EXCLUDED_FILE_NAMES or is_sensitive_path(path.relative_to(source)):
+            if name.casefold() in EXCLUDED_FILE_NAMES or is_sensitive_path(
+                path.relative_to(source)
+            ):
                 continue
             if path.is_symlink():
                 raise SyncError(f"refusing symlink file: {path}")
@@ -807,23 +1007,51 @@ def _directory_entries(source: Path) -> list[Path]:
     return entries
 
 
-def _ensure_directory_content(content: bytes, path: Path) -> None:
+def _ensure_directory_content(
+    content: bytes, path: Path, *, scan_encoded: bool = True
+) -> None:
     try:
-        text = content.decode("utf-8")
+        content.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise SyncError(f"directory file is not UTF-8: {path}") from exc
-    if any(marker.search(text) for marker in CREDENTIAL_MARKERS[1:]):
-        raise SyncError(f"refusing content that resembles a credential: {path}")
+    # Directory source code/docs may mention credential words in prose. Require
+    # an assignment-like value before rejecting a text file.
+    texts = _decoded_candidates(content)
     assignment = re.compile(
-        r"(?im)(?:^|[,\s])['\"]?(?:api[_-]?key|access[_-]?token|"
-        r"refresh[_-]?token|client[_-]?secret|password|bearer[_-]?token|"
-        r"authorization)['\"]?\s*[:=]\s*['\"]?[^'\"\s,}]+"
+        r"(?im)(?:^|[,{;\s])['\"]?(?:api[_-]?key|access[_-]?token|"
+        r"refresh[_-]?token|client[_-]?secret|private[_-]?key|auth|token|"
+        r"credentials?|password|secret|cookie|history|session)['\"]?\s*[:=]\s*"
+        r"['\"]?([^\s,};'\"]+)"
     )
-    if assignment.search(text):
-        raise SyncError(f"refusing content that resembles a credential: {path}")
+    common_words = {
+        "no",
+        "not",
+        "none",
+        "true",
+        "false",
+        "null",
+        "undefined",
+        "await",
+        "this",
+        "this.client.session",
+        "current",
+        "parent",
+        "client",
+        "session",
+    }
+    for text in texts:
+        if any(marker.search(text) for marker in CREDENTIAL_MARKERS[1:]):
+            raise SyncError(f"refusing content that resembles a credential: {path}")
+        for match in assignment.finditer(text):
+            if match.group(1).casefold() not in common_words:
+                raise SyncError(f"refusing content that resembles a credential: {path}")
+    if scan_encoded:
+        ensure_safe_content(content)
 
 
-def _export_directory(item: Mapping, source: Path, destination: Path, *, dry_run: bool) -> int:
+def _export_directory(
+    item: Mapping, source: Path, destination: Path, *, dry_run: bool
+) -> int:
     count = 0
     for path in _directory_entries(source):
         relative = path.relative_to(source)
@@ -835,7 +1063,9 @@ def _export_directory(item: Mapping, source: Path, destination: Path, *, dry_run
     return count
 
 
-def _install_directory(item: Mapping, source: Path, destination: Path, *, dry_run: bool, force: bool) -> int:
+def _install_directory(
+    item: Mapping, source: Path, destination: Path, *, dry_run: bool, force: bool
+) -> int:
     count = 0
     for path in _directory_entries(source):
         relative = path.relative_to(source)
@@ -849,17 +1079,24 @@ def _install_directory(item: Mapping, source: Path, destination: Path, *, dry_ru
 
 
 def export_files(
-    manifest: Iterable[Mapping], repo_root: Path, *, platform: str = sys.platform,
-    home: Path | None = None, appdata: Path | None = None, dry_run: bool = False,
+    manifest: Iterable[Mapping],
+    repo_root: Path,
+    *,
+    platform: str = sys.platform,
+    home: Path | None = None,
+    appdata: Path | None = None,
+    dry_run: bool = False,
 ) -> int:
     entries = _validate_manifest(manifest)
     repo_root = _validated_root(repo_root, "repository")
     home, appdata = _defaults(platform, home, appdata)
     count = 0
     for item in entries:
-        source = resolve_destination(platform, item.platform_root, item.relative_path, home=home, appdata=appdata)
+        source = resolve_destination(
+            platform, item.platform_root, item.relative_path, home=home, appdata=appdata
+        )
         destination = _safe_join(repo_root, item.repo_path, label="repository")
-        if not source.exists():
+        if not _exists_or_symlink(source):
             if item.required:
                 raise SyncError(f"required source file not found: {source}")
             print(f"skip missing {source}")
@@ -867,13 +1104,26 @@ def export_files(
         if item.mode == "directory":
             count += _export_directory(item, source, destination, dry_run=dry_run)
         else:
-            _copy_content(source, destination, _processed_content(source, item), dry_run=dry_run, force=True)
+            _copy_content(
+                source,
+                destination,
+                _processed_content(source, item),
+                dry_run=dry_run,
+                force=True,
+            )
             count += 1
     return count
 
+
 def install_files(
-    manifest: Iterable[Mapping], repo_root: Path, *, platform: str = sys.platform,
-    home: Path | None = None, appdata: Path | None = None, dry_run: bool = False, force: bool = False,
+    manifest: Iterable[Mapping],
+    repo_root: Path,
+    *,
+    platform: str = sys.platform,
+    home: Path | None = None,
+    appdata: Path | None = None,
+    dry_run: bool = False,
+    force: bool = False,
 ) -> int:
     entries = _validate_manifest(manifest)
     repo_root = _validated_root(repo_root, "repository")
@@ -881,18 +1131,29 @@ def install_files(
     count = 0
     for item in entries:
         source = _safe_join(repo_root, item.repo_path, label="repository")
-        destination = resolve_destination(platform, item.platform_root, item.relative_path, home=home, appdata=appdata)
-        if not source.exists():
+        destination = resolve_destination(
+            platform, item.platform_root, item.relative_path, home=home, appdata=appdata
+        )
+        if not _exists_or_symlink(source):
             if item.required:
                 raise SyncError(f"required repository file not found: {source}")
             print(f"skip missing {source}")
             continue
         if item.mode == "directory":
-            count += _install_directory(item, source, destination, dry_run=dry_run, force=force)
+            count += _install_directory(
+                item, source, destination, dry_run=dry_run, force=force
+            )
         else:
-            _copy_content(source, destination, _processed_content(source, item), dry_run=dry_run, force=force)
+            _copy_content(
+                source,
+                destination,
+                _processed_content(source, item),
+                dry_run=dry_run,
+                force=force,
+            )
             count += 1
     return count
+
 
 def check_files(
     manifest: Iterable[Mapping],
@@ -909,19 +1170,25 @@ def check_files(
     failures = 0
     for item in entries:
         try:
-            source = resolve_destination(platform, item.platform_root, item.relative_path, home=home, appdata=appdata)
+            source = resolve_destination(
+                platform,
+                item.platform_root,
+                item.relative_path,
+                home=home,
+                appdata=appdata,
+            )
             repo_path = _safe_join(repo_root, item.repo_path, label="repository")
             if item.mode == "directory":
                 source_entries = _directory_entries(source)
                 repo_entries = _directory_entries(repo_path)
                 for path in source_entries + repo_entries:
                     content = _read_verified_content(path, "directory")
-                    _ensure_directory_content(content, path)
+                    _ensure_directory_content(content, path, scan_encoded=True)
                 print(f"ok source {source} ({len(source_entries)} files)")
                 print(f"ok repo {repo_path} ({len(repo_entries)} files)")
                 continue
             for label, path in (("source", source), ("repo", repo_path)):
-                if not path.exists():
+                if not _exists_or_symlink(path):
                     if item.required:
                         print(f"missing required {label} {path}")
                         failures += 1
@@ -934,6 +1201,7 @@ def check_files(
             print(f"unsafe {item.repo_path}: {exc}")
             failures += 1
     return failures
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(

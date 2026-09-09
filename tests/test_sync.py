@@ -205,7 +205,7 @@ class SyncTests(unittest.TestCase):
     def test_content_scanner_rejects_benign_uppercase_short_token_value(self):
         # Current fail-closed Base64 screening rejects short uppercase words such as TRUE.
         with self.assertRaises(sync.SyncError):
-            sync.ensure_safe_content(b"mode = TRUE")
+            sync.ensure_safe_content(b"token = TRUE")
 
     def test_text_transform_rejects_deeper_pending_candidate(self):
         encoded = "token=abc"
@@ -372,8 +372,16 @@ class SyncTests(unittest.TestCase):
         sync.ensure_safe_content(b"theme = 'dark'\\nmodel = 'default'\\n")
 
     def test_mapping_modes_and_sanitized_config(self):
-        self.assertTrue({"file", "sanitized_json", "sanitized_jsonc", "directory"}.issuperset({item.mode for item in sync.MANIFEST}))
-        self.assertIn("sanitized_jsonc", {item.mode for item in sync.MANIFEST})
+        self.assertTrue(
+            {"file", "sanitized_json", "sanitized_jsonc", "directory"}.issuperset(
+                {item.mode for item in sync.MANIFEST}
+            )
+        )
+        self.assertIn("file", {item.mode for item in sync.MANIFEST})
+        dcp = next(
+            item for item in sync.MANIFEST if item.relative_path.endswith("dcp.jsonc")
+        )
+        self.assertEqual(dcp.mode, "file")
         source = '{"baseURL":"https://private.example/v1","apiKey":"live-value","nested":{"token":"x"}}'
         result = json.loads(sync.sanitize_config(source, "opencode"))
         self.assertEqual(result["baseURL"], "${OPENCODE_API_BASE_URL}")
@@ -381,6 +389,11 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(result["nested"]["token"], "${OPENCODE_API_KEY}")
         self.assertNotIn("private.example", sync.sanitize_config(source, "opencode"))
         self.assertNotIn("live-value", sync.sanitize_config(source, "opencode"))
+
+    def test_jsonc_comment_replacement_preserves_malformed_adjacency(self):
+        source = '{"key" // comment\n "value": 1}'
+        with self.assertRaises(sync.SyncError):
+            sync.sanitize_config(source, "opencode", jsonc=True)
 
     def test_jsonc_sanitization_preserves_urls_in_strings(self):
         source = '{\n // comment\n "url": "https://private.example/v1",\n "label": "https://public.example/docs",\n}'
@@ -406,11 +419,23 @@ class SyncTests(unittest.TestCase):
             (source / "node_modules" / "x.js").write_text("x", encoding="utf-8")
             sibling = source.parent / "sibling.ts"
             sibling.write_text("sibling", encoding="utf-8")
-            manifest = (sync.Mapping("opencode", "configs/opencode/plugins", "home", ".config/opencode/plugins", mode="directory"),)
-            self.assertEqual(sync.export_files(manifest, repo, platform="darwin", home=home), 1)
+            manifest = (
+                sync.Mapping(
+                    "opencode",
+                    "configs/opencode/plugins",
+                    "home",
+                    ".config/opencode/plugins",
+                    mode="directory",
+                ),
+            )
+            self.assertEqual(
+                sync.export_files(manifest, repo, platform="darwin", home=home), 1
+            )
             self.assertTrue((repo / "configs/opencode/plugins/safe.ts").exists())
             self.assertFalse((repo / "configs/opencode/plugins/auth.json").exists())
-            self.assertFalse((repo / "configs/opencode/plugins/node_modules/x.js").exists())
+            self.assertFalse(
+                (repo / "configs/opencode/plugins/node_modules/x.js").exists()
+            )
             self.assertFalse((repo / "configs/opencode/sibling.ts").exists())
 
     def test_sanitized_export_leaves_source_unchanged(self):
@@ -421,10 +446,22 @@ class SyncTests(unittest.TestCase):
             source = home / ".pi" / "agent" / "models.json"
             source.parent.mkdir(parents=True)
             repo.mkdir()
-            original = '{"provider":{"baseUrl":"https://private.example","apiKey":"live"}}'
+            original = (
+                '{"provider":{"baseUrl":"https://private.example","apiKey":"live"}}'
+            )
             source.write_text(original, encoding="utf-8")
-            manifest = (sync.Mapping("pi", "configs/pi/models.json", "home", ".pi/agent/models.json", mode="sanitized_json"),)
-            self.assertEqual(sync.export_files(manifest, repo, platform="darwin", home=home), 1)
+            manifest = (
+                sync.Mapping(
+                    "pi",
+                    "configs/pi/models.json",
+                    "home",
+                    ".pi/agent/models.json",
+                    mode="sanitized_json",
+                ),
+            )
+            self.assertEqual(
+                sync.export_files(manifest, repo, platform="darwin", home=home), 1
+            )
             exported = (repo / "configs/pi/models.json").read_text(encoding="utf-8")
             self.assertIn("${PI_API_BASE_URL}", exported)
             self.assertIn("${PI_PROVIDER_API_KEY}", exported)
