@@ -91,7 +91,7 @@ function isValidBranchName(name: string): boolean {
 		if (code <= 0x1f || code === 0x7f) return false
 	}
 	// Check for invalid git ref characters and shell metacharacters
-	if (/[~^:?*[\]\\;&|`$()]/.test(name)) return false
+	if (/[~^:?*[\]${OPENCODE_LOCAL_PATH} return false
 	return true
 }
 
@@ -114,7 +114,7 @@ const branchNameSchema = z
 		message: "Branch name cannot contain '..'",
 	})
 	// biome-ignore lint/suspicious/noControlCharactersInRegex: Control character detection is intentional for security
-	.refine((name) => !/[\x00-\x1f\x7f ~^:?*[\]\\]/.test(name), {
+	.refine((name) => !/[\x00-\x1f\x7f ~^:?*[\]${OPENCODE_LOCAL_PATH} {
 		message: "Branch name contains invalid characters",
 	})
 	.max(255, "Branch name too long")
@@ -901,7 +901,7 @@ async function runHooks(cwd: string, commands: string[], log: Logger): Promise<v
  * Resolve a path that may contain a leading `~` to the user's home directory.
  */
 function resolveHomePath(p: string): string {
-	if (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) {
+	if (p === "~" || p.startsWith("${OPENCODE_LOCAL_PATH}") || p.startsWith("${OPENCODE_LOCAL_PATH}")) {
 		return path.join(os.homedir(), p.slice(1))
 	}
 	return p
@@ -925,8 +925,8 @@ async function loadWorktreeConfig(directory: string, log: Logger): Promise<Workt
   // Documentation: https://github.com/kdcokenny/ocx
 
   // Custom base path for worktree storage (supports ~)
-  // Default: ~/.local/share/opencode/worktree
-  // "worktreePath": "~/my-worktrees",
+  // Default: ${OPENCODE_LOCAL_PATH}
+  // "worktreePath": "${OPENCODE_LOCAL_PATH}",
 
   "sync": {
     // Files to copy from main worktree to new worktrees

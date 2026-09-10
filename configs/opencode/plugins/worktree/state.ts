@@ -4,7 +4,7 @@
  * Provides atomic, crash-safe persistence for worktree sessions and pending operations.
  * Uses bun:sqlite for zero external dependencies.
  *
- * Database location: ~/.local/share/opencode/plugins/worktree/{project-id}.sqlite
+ * Database location: ${OPENCODE_LOCAL_PATH}
  * Project ID is the first git root commit SHA (40-char hex), with SHA-256 path hash fallback (16-char).
  */
 
@@ -82,7 +82,7 @@ const pendingDeleteSchema = z.object({
 
 /**
  * Get the default base directory for worktree storage.
- * Location: ~/.local/share/opencode/worktree/
+ * Location: ${OPENCODE_LOCAL_PATH}
  */
 function getWorktreeBaseDirectory(): string {
 	return path.join(os.homedir(), ".local", "share", "opencode", "worktree")
@@ -93,7 +93,7 @@ function getWorktreeBaseDirectory(): string {
  *
  * @param projectRoot - Absolute path to the project root
  * @param branch - Branch name for the worktree
- * @param basePath - Optional custom base path (absolute). Defaults to ~/.local/share/opencode/worktree
+ * @param basePath - Optional custom base path (absolute). Defaults to ${OPENCODE_LOCAL_PATH}
  * @returns Absolute path to the worktree directory
  */
 export async function getWorktreePath(
@@ -110,7 +110,7 @@ export async function getWorktreePath(
 
 /**
  * Get the database directory path.
- * Location: ~/.local/share/opencode/plugins/worktree/
+ * Location: ${OPENCODE_LOCAL_PATH}
  */
 function getDbDirectory(): string {
 	const home = os.homedir()
@@ -135,7 +135,7 @@ async function getDbPath(projectRoot: string): Promise<string> {
  *
  * @example
  * ```ts
- * const db = await initStateDb("/home/user/my-project")
+ * const db = await initStateDb("${OPENCODE_LOCAL_PATH}")
  * const sessions = getAllSessions(db)
  * db.close()
  * ```

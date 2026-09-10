@@ -49,10 +49,10 @@ function hashPath(projectRoot: string): string {
  *
  * @example
  * ```ts
- * const projectId = await getProjectId("/home/user/my-repo")
+ * const projectId = await getProjectId("${OPENCODE_LOCAL_PATH}")
  * // Returns: "abc123..." (40-char git hash)
  *
- * const projectId = await getProjectId("/home/user/non-git-folder")
+ * const projectId = await getProjectId("${OPENCODE_LOCAL_PATH}")
  * // Returns: "def456..." (16-char path hash)
  * ```
  */

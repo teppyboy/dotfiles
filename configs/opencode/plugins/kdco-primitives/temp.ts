@@ -13,8 +13,8 @@ import * as os from "node:os"
 /**
  * Get the real temp directory path, resolving symlinks.
  *
- * This is critical for macOS where `os.tmpdir()` returns `/var/folders/...`
- * which is actually a symlink to `/private/var/folders/...`. Many tools
+ * This is critical for macOS where `os.tmpdir()` returns `${OPENCODE_LOCAL_PATH}`
+ * which is actually a symlink to `${OPENCODE_LOCAL_PATH}`. Many tools
  * (including Bun's test harness, VS Code, and Eclipse Theia) need the
  * resolved real path for proper file watching and path comparisons.
  *
@@ -23,9 +23,9 @@ import * as os from "node:os"
  * @example
  * ```ts
  * const tempDir = getTempDir()
- * // macOS: "/private/var/folders/xx/xxxxx/T" (resolved)
- * // Linux: "/tmp" (usually not a symlink)
- * // Windows: "C:\\Users\\name\\AppData\\Local\\Temp"
+ * // macOS: "${OPENCODE_LOCAL_PATH}" (resolved)
+ * // Linux: "${OPENCODE_LOCAL_PATH}" (usually not a symlink)
+ * // Windows: "${OPENCODE_LOCAL_PATH}"
  *
  * // Use for creating temp files
  * const tempFile = path.join(getTempDir(), `script-${Date.now()}.sh`)

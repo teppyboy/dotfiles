@@ -476,9 +476,10 @@ class SyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             source = Path(temp) / "plugins"
             source.mkdir()
-            with mock.patch.object(
-                sync.os, "walk", side_effect=failing_walk
-            ), self.assertRaises(sync.SyncError):
+            with (
+                mock.patch.object(sync.os, "walk", side_effect=failing_walk),
+                self.assertRaises(sync.SyncError),
+            ):
                 sync._directory_entries(source)
 
     def test_directory_export_skips_excluded_entries(self):

@@ -1136,10 +1136,7 @@ def _directory_entries(source: Path) -> list[Path]:
         for name in sorted(files):
             path = current_path / name
             relative = path.relative_to(source)
-            if (
-                name.casefold() in EXCLUDED_FILE_NAMES
-                or is_sensitive_path(relative)
-            ):
+            if name.casefold() in EXCLUDED_FILE_NAMES or is_sensitive_path(relative):
                 continue
             if path.is_symlink():
                 raise SyncError(f"refusing symlink file: {path}")

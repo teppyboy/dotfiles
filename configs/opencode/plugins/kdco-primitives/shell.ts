@@ -56,9 +56,9 @@ export function assertShellSafe(value: string, context: string): void {
  *
  * @example
  * ```ts
- * const path = '/home/user/my "project"'
+ * const path = '${OPENCODE_LOCAL_PATH} "project"'
  * const cmd = `cd "${escapeBash(path)}"`
- * // Result: cd "/home/user/my \"project\""
+ * // Result: cd "${OPENCODE_LOCAL_PATH} \"project\""
  *
  * const var = '$HOME/file'
  * const cmd = `echo "${escapeBash(var)}"`
@@ -90,9 +90,9 @@ export function escapeBash(str: string): string {
  *
  * @example
  * ```ts
- * const path = '/Users/name/my "project"'
+ * const path = '${OPENCODE_LOCAL_PATH} "project"'
  * const script = `tell application "Terminal" to write text "${escapeAppleScript(path)}"`
- * // Result: ... write text "/Users/name/my \"project\""
+ * // Result: ... write text "${OPENCODE_LOCAL_PATH} \"project\""
  * ```
  */
 export function escapeAppleScript(str: string): string {
@@ -117,9 +117,9 @@ export function escapeAppleScript(str: string): string {
  *
  * @example
  * ```ts
- * const path = 'C:\\Users\\name\\project & files'
+ * const path = '${OPENCODE_LOCAL_PATH} & files'
  * const cmd = `cd /d "${escapeBatch(path)}"`
- * // Result: cd /d "C:\Users\name\project ^& files"
+ * // Result: cd /d "${OPENCODE_LOCAL_PATH} ^& files"
  *
  * const var = '100%'
  * const cmd = `echo ${escapeBatch(var)}`

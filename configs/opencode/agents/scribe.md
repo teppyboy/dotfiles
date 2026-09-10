@@ -69,7 +69,7 @@ Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
 
 ### AGENTS.md Location Guidelines
 
-- **Profile instructions** → Place in profile's `AGENTS.md` (`~/.config/opencode/profiles/{name}/AGENTS.md`)
+- **Profile instructions** → Place in profile's `AGENTS.md` (`${OPENCODE_LOCAL_PATH}`)
 - **Project instructions** → Place in project root `AGENTS.md` or `.opencode/AGENTS.md`
 - **Discovery behavior** → OCX walks up from project directory to git root, finding instruction files at each level
 - **Filtering** → Profile's `exclude`/`include` patterns control which project files OpenCode sees

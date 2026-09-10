@@ -355,7 +355,7 @@ Correct:
 Wrong: Search codebase yourself or answer from memory
 </example>
 
-</workspace-routing>
+<${OPENCODE_LOCAL_PATH}-routing>
 
 <philosophy>
 Load relevant skills before finalizing plan:
@@ -466,7 +466,7 @@ For any command execution (bun check, bun test, git operations):
 - \`coder\` handles ALL code modifications
 - \`scribe\` handles ALL human-facing content
 
-</workspace-routing>
+<${OPENCODE_LOCAL_PATH}-routing>
 
 <build-workflow>
 
@@ -699,7 +699,7 @@ ${currentTask ? `Current task: ${currentTask}` : "No task marked as CURRENT"}
 
 ## Verification
 To verify any cited decision, use \`delegation_read("ref:id")\`.
-</workspace-context>`)
+<${OPENCODE_LOCAL_PATH}-context>`)
 		},
 	}
 }

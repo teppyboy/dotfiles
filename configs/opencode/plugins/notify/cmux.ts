@@ -84,7 +84,7 @@ function isTrustedCmuxCommandPath(
 	const realTempDirectory = realpathBestEffort(tempDirectory)
 	const apparentCandidate = path.resolve(candidatePath)
 	const realCandidate = realpathBestEffort(candidatePath)
-	const commonTempDirectories = ["/tmp", "/private/tmp", "/var/tmp"]
+	const commonTempDirectories = ["${OPENCODE_LOCAL_PATH}", "${OPENCODE_LOCAL_PATH}", "${OPENCODE_LOCAL_PATH}"]
 	const untrustedRoots = [
 		cwd,
 		realCwd,
