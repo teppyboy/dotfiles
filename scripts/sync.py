@@ -977,6 +977,31 @@ def _reject_symlink_path(path: Path) -> None:
 def _exists_or_symlink(path: Path) -> bool:
     return path.exists() or path.is_symlink()
 
+def _confirm_delete_missing_export(
+    source: Path, destination: Path, *, dry_run: bool
+) -> bool:
+    if not _exists_or_symlink(destination):
+        return False
+    if dry_run:
+        print(f"source missing {source}; would ask whether to delete {destination}")
+        return False
+    try:
+        answer = input(
+            f"source missing {source}; delete exported copy {destination}? [y/N] "
+        )
+    except EOFError:
+        answer = ""
+    if answer.strip().casefold() not in {"y", "yes"}:
+        print(f"keep exported copy {destination}")
+        return False
+    _reject_symlink_path(destination)
+    details = _regular_file_stat(destination, "repository")
+    if details.st_nlink > 1:
+        raise SyncError(f"refusing hardlink repository file: {destination}")
+    destination.unlink()
+    print(f"delete {destination}")
+    return True
+
 
 def _regular_file_stat(path: Path, label: str) -> os.stat_result:
     """Stat a non-symlink regular file without following links."""
@@ -1214,9 +1239,14 @@ def export_files(
         )
         destination = _safe_join(repo_root, item.repo_path, label="repository")
         if not _exists_or_symlink(source):
-            if item.required:
+            if item.mode != "directory" and _confirm_delete_missing_export(
+                source, destination, dry_run=dry_run
+            ):
+                count += 1
+            elif item.required:
                 raise SyncError(f"required source file not found: {source}")
-            print(f"skip missing {source}")
+            else:
+                print(f"skip missing {source}")
             continue
         if item.mode == "directory":
             count += _export_directory(item, source, destination, dry_run=dry_run)

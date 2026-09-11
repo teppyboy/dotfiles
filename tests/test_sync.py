@@ -903,6 +903,38 @@ class SyncTests(unittest.TestCase):
             with self.assertRaises(sync.SyncError):
                 sync.export_files((required,), repo, platform="darwin", home=home)
 
+    def test_export_missing_source_keeps_repo_copy_without_confirmation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            home.mkdir()
+            repo_file = repo / "configs" / "missing.txt"
+            repo_file.parent.mkdir(parents=True)
+            repo_file.write_text("keep", encoding="utf-8")
+            manifest = (sync.Mapping("test", "configs/missing.txt", "home", "missing.txt"),)
+            with mock.patch("builtins.input", return_value="n"):
+                self.assertEqual(
+                    sync.export_files(manifest, repo, platform="darwin", home=home), 0
+                )
+            self.assertTrue(repo_file.exists())
+
+    def test_export_missing_source_can_delete_repo_copy(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            repo = root / "repo"
+            home.mkdir()
+            repo_file = repo / "configs" / "missing.txt"
+            repo_file.parent.mkdir(parents=True)
+            repo_file.write_text("delete", encoding="utf-8")
+            manifest = (sync.Mapping("test", "configs/missing.txt", "home", "missing.txt"),)
+            with mock.patch("builtins.input", return_value="yes"):
+                self.assertEqual(
+                    sync.export_files(manifest, repo, platform="darwin", home=home), 1
+                )
+            self.assertFalse(repo_file.exists())
+
     def test_export_install_check_round_trip(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
