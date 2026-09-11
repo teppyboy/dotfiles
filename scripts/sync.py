@@ -401,13 +401,12 @@ def _looks_machine_path(value: str) -> bool:
     )
 
 
-def _is_public_exa_mcp_url(
-    value: object, app: str, *, server_context: bool
-) -> bool:
+def _is_public_exa_mcp_url(value: object, app: str, *, server_context: bool) -> bool:
     if app != "pi" or not server_context or not isinstance(value, str):
         return False
     parsed = urlsplit(value)
     return parsed.scheme == "https" and parsed.hostname == "mcp.exa.ai"
+
 
 def _sanitize_value(
     key: str | None,
@@ -493,9 +492,7 @@ def _validate_sanitized(
             )
             and isinstance(value, str)
             and value.startswith(("http://", "https://"))
-            and not _is_public_exa_mcp_url(
-                value, app, server_context=server_context
-            )
+            and not _is_public_exa_mcp_url(value, app, server_context=server_context)
         ):
             raise SyncError(f"unsanitized endpoint field: {key}")
     if isinstance(value, dict):

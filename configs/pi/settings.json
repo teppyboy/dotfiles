@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.85.1",
   "defaultProvider": "9router-alice",
-  "defaultModel": "cli/gpt-5.6-sol",
+  "defaultModel": "cli/gpt-5.6-luna",
   "hideThinkingBlock": true,
   "defaultThinkingLevel": "high",
   "packages": [

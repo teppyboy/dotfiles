@@ -433,9 +433,7 @@ class SyncTests(unittest.TestCase):
             {"mcpServers": {"custom": {"url": "https://private.example/mcp"}}}
         )
         result = json.loads(sync.sanitize_config(source, "pi"))
-        self.assertEqual(
-            result["mcpServers"]["custom"]["url"], "${PI_API_BASE_URL}"
-        )
+        self.assertEqual(result["mcpServers"]["custom"]["url"], "${PI_API_BASE_URL}")
 
     def test_sanitizer_rejects_unknown_credential_field(self):
         with self.assertRaises(sync.SyncError):
