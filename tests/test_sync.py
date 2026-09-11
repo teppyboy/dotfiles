@@ -422,10 +422,20 @@ class SyncTests(unittest.TestCase):
         for key in json.loads(source):
             self.assertEqual(result[key], "${OPENCODE_API_KEY}")
 
-    def test_sanitizer_replaces_pi_mcp_endpoint(self):
-        source = json.dumps({"mcpServers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}})
+    def test_sanitizer_preserves_public_pi_exa_mcp_endpoint(self):
+        url = "https://mcp.exa.ai/mcp?tools=web_fetch_exa,web_search_exa"
+        source = json.dumps({"mcpServers": {"exa": {"url": url}}})
         result = json.loads(sync.sanitize_config(source, "pi"))
-        self.assertEqual(result["mcpServers"]["exa"]["url"], "${PI_API_BASE_URL}")
+        self.assertEqual(result["mcpServers"]["exa"]["url"], url)
+
+    def test_sanitizer_replaces_private_pi_mcp_endpoint(self):
+        source = json.dumps(
+            {"mcpServers": {"custom": {"url": "https://private.example/mcp"}}}
+        )
+        result = json.loads(sync.sanitize_config(source, "pi"))
+        self.assertEqual(
+            result["mcpServers"]["custom"]["url"], "${PI_API_BASE_URL}"
+        )
 
     def test_sanitizer_rejects_unknown_credential_field(self):
         with self.assertRaises(sync.SyncError):
@@ -912,7 +922,9 @@ class SyncTests(unittest.TestCase):
             repo_file = repo / "configs" / "missing.txt"
             repo_file.parent.mkdir(parents=True)
             repo_file.write_text("keep", encoding="utf-8")
-            manifest = (sync.Mapping("test", "configs/missing.txt", "home", "missing.txt"),)
+            manifest = (
+                sync.Mapping("test", "configs/missing.txt", "home", "missing.txt"),
+            )
             with mock.patch("builtins.input", return_value="n"):
                 self.assertEqual(
                     sync.export_files(manifest, repo, platform="darwin", home=home), 0
@@ -928,7 +940,9 @@ class SyncTests(unittest.TestCase):
             repo_file = repo / "configs" / "missing.txt"
             repo_file.parent.mkdir(parents=True)
             repo_file.write_text("delete", encoding="utf-8")
-            manifest = (sync.Mapping("test", "configs/missing.txt", "home", "missing.txt"),)
+            manifest = (
+                sync.Mapping("test", "configs/missing.txt", "home", "missing.txt"),
+            )
             with mock.patch("builtins.input", return_value="yes"):
                 self.assertEqual(
                     sync.export_files(manifest, repo, platform="darwin", home=home), 1

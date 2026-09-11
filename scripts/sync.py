@@ -16,7 +16,7 @@ import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 
 class SyncError(RuntimeError):
@@ -401,6 +401,14 @@ def _looks_machine_path(value: str) -> bool:
     )
 
 
+def _is_public_exa_mcp_url(
+    value: object, app: str, *, server_context: bool
+) -> bool:
+    if app != "pi" or not server_context or not isinstance(value, str):
+        return False
+    parsed = urlsplit(value)
+    return parsed.scheme == "https" and parsed.hostname == "mcp.exa.ai"
+
 def _sanitize_value(
     key: str | None,
     value: object,
@@ -428,6 +436,8 @@ def _sanitize_value(
             normalized_key in {_normalized_key(item) for item in ALWAYS_ENDPOINT_KEYS}
             or (server_context and normalized_key == "url")
         ) and isinstance(value, str):
+            if _is_public_exa_mcp_url(value, app, server_context=server_context):
+                return value
             return endpoint
     if isinstance(value, str) and _looks_machine_path(value):
         return local_path
@@ -483,6 +493,9 @@ def _validate_sanitized(
             )
             and isinstance(value, str)
             and value.startswith(("http://", "https://"))
+            and not _is_public_exa_mcp_url(
+                value, app, server_context=server_context
+            )
         ):
             raise SyncError(f"unsanitized endpoint field: {key}")
     if isinstance(value, dict):
@@ -976,6 +989,7 @@ def _reject_symlink_path(path: Path) -> None:
 
 def _exists_or_symlink(path: Path) -> bool:
     return path.exists() or path.is_symlink()
+
 
 def _confirm_delete_missing_export(
     source: Path, destination: Path, *, dry_run: bool
